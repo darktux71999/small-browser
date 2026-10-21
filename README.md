@@ -35,6 +35,7 @@ cargo build
 ./target/debug/browser-lite --dump test/data/demo.html # DOM + cajas
 ./target/debug/browser-lite --png out.png test/data/demo.html
 cargo run --bin blitz-lite -- test/data/js-dom.html   # Blitz + QuickJS
+cargo run --bin blitz-lite -- https://example.com      # carga por HTTP(S)
 ```
 
 ## Estructura
