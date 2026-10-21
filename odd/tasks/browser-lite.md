@@ -26,6 +26,11 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - S6: los `<script>` inline se evalúan con QuickJS en orden; `console.log`
   escribe en stdout; un error JS se reporta y no aborta el render.
 - S7: `cargo test` cubre S1-S6 con fixtures en `test/data`.
+- S8: `blitz-lite file.html` renderiza con Blitz (HTML/CSS/layout/paint de
+  Stylo+Taffy+Vello) usando la GPU del sistema.
+- S9: QuickJS ejecuta los `<script>` inline sobre el DOM de Blitz: soporta
+  `document.getElementById/body/createElement/querySelector`, `appendChild`,
+  `setAttribute`, `textContent`, y las mutaciones se reflejan en el render.
 
 ## Tasks
 
@@ -35,6 +40,7 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - T4 [S5] inline — paint cairo + PNG + ventana SDL3 — DONE
 - T5 [S6] inline — QuickJS runtime — DONE
 - T6 [S7] inline — 7 tests + fixtures demo/nojs — DONE
+- T7 [S8,S9] inline — Blitz renderer + puente DOM QuickJS — DONE
 
 ## Log
 
@@ -64,3 +70,16 @@ Ventana SDL3 abierta en DISPLAY=:1 y verificada por screenshot.
 Hallazgos: quickjs-ng 0.17 usa JSValue de 16 bytes por valor (no puntero
 etiquetado) y JS_Eval exige fuente NUL-terminada aunque reciba longitud; ambos
 documentados en `src/sys.rs` y `src/js.rs`.
+
+L6: usuario elige QuickJS como motor tras comparar con Boa/vibey-script.
+Se implementa `src/blitz_engine.rs`: wrapper `JsDocument` (Deref a
+BaseDocument + poll que ejecuta scripts) y puente QuickJS con funciones
+nativas `__dom_*` más un bootstrap JS que expone una clase Element mínima.
+
+L7 (evidencia): `blitz-lite test/data/js-dom.html` abre ventana, QuickJS crea
+un h1 y un p, y Blitz los pinta (captura verificada). RSS 140 MB. Hallazgos:
+blitz-html necesita `ua_stylesheets: Some(..)` para inyectar DEFAULT_CSS o
+todo colapsa; el trait Document de 0.2.4 es Deref<Target=BaseDocument>;
+`set_node_text` solo aplica a nodos Text, así que `textContent` = remove
+children + create_text_node + append; los scripts corren antes del primer
+layout para que el frame inicial ya tenga las mutaciones.

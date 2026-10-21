@@ -161,6 +161,9 @@ extern "C" {
     pub fn JS_FreeValue(ctx: *mut JSContext, v: JSValue);
     pub fn JS_GetException(ctx: *mut JSContext) -> JSValue;
     pub fn JS_ExecutePendingJob(rt: *mut JSRuntime, pctx: *mut *mut JSContext) -> c_int;
+    pub fn JS_GetContextOpaque(ctx: *mut JSContext) -> *mut c_void;
+    pub fn JS_SetContextOpaque(ctx: *mut JSContext, opaque: *mut c_void);
+    pub fn JS_ToInt64(ctx: *mut JSContext, pres: *mut i64, val: JSValue) -> c_int;
 }
 
 pub fn js_is_exception(v: JSValue) -> bool {

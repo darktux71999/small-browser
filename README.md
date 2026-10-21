@@ -20,6 +20,13 @@ Navegador desktop ligero, desde cero, sobre el stack KISS ya instalado.
 Go se descartó: cgo en el límite DOM/JS es el camino caliente y encarece cada
 acceso. Rust con FFI fino enlaza las librerías del sistema sin duplicarlas.
 
+## Dos motores
+
+- `browser-lite` — motor propio (lexbor + CSS subset + cairo + SDL3). Ligero,
+  sin dependencias pesadas, útil como fallback y para `--dump/--png`.
+- `blitz-lite` — render real con Blitz (Stylo + Taffy + Vello) y QuickJS
+  ejecutando los scripts sobre el DOM de Blitz.
+
 ## Uso
 
 ```sh
@@ -27,6 +34,7 @@ cargo build
 ./target/debug/browser-lite test/data/demo.html        # ventana
 ./target/debug/browser-lite --dump test/data/demo.html # DOM + cajas
 ./target/debug/browser-lite --png out.png test/data/demo.html
+cargo run --bin blitz-lite -- test/data/js-dom.html   # Blitz + QuickJS
 ```
 
 ## Estructura
@@ -46,9 +54,9 @@ depende de UI. Nada incluye `shell` hacia abajo.
 
 ## Estado
 
-Corte 1 completo: parseo HTML5 real, cascada con especificidad y
-`!important`, layout block, pintado cairo, ventana SDL3 y QuickJS evaluando
-scripts con errores no fatales. `cargo test` cubre los 7 casos del corte.
+Corte 1 completo en el motor propio. Corte 2: `blitz-lite` renderiza con
+Blitz y QuickJS muta el DOM (`getElementById`, `createElement`,
+`appendChild`, `setAttribute`, `textContent`, `querySelector`). 7 tests
+verdes en el motor propio; el puente Blitz se verifica por captura.
 
-Siguiente: navegación (curl/URL/historial), inline layout con estilos por
-span, y proceso por tab + seccomp.
+Siguiente: eventos (`addEventListener`/click), timers y navegación real.

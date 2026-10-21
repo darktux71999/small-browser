@@ -8,3 +8,6 @@ pub mod layout;
 pub mod paint;
 pub mod shell;
 pub mod sys;
+
+#[cfg(feature = "blitz-engine")]
+pub mod blitz_engine;

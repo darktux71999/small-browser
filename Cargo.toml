@@ -3,8 +3,24 @@ name = "browser-lite"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["blitz-engine"]
+blitz-engine = [
+    "dep:blitz-dom",
+    "dep:blitz-html",
+    "dep:blitz-shell",
+    "dep:anyrender_vello",
+    "dep:markup5ever",
+]
+
 [dependencies]
 cairo-rs = { version = "0.22", features = ["png"] }
+
+blitz-dom = { version = "0.2.4", features = ["system_fonts"], optional = true }
+blitz-html = { version = "0.2.0", optional = true }
+blitz-shell = { version = "0.2.3", optional = true }
+anyrender_vello = { version = "0.6.2", optional = true }
+markup5ever = { version = "0.35", optional = true }
 
 [profile.release]
 opt-level = 2
