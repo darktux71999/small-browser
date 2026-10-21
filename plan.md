@@ -290,3 +290,16 @@ Wired `blitz_net::Provider` + tokio runtime through `DocumentConfig`; Blitz
 handles `ResourceLoad`. Verified: codeberg.org renders its CSS (blue nav, hero,
 footer columns) with zero GPU traps. `blitz-lite` uses `run_html`; `blitz-tabs`
 shares one provider across tabs.
+
+### T10 (Agent A / me) — DOM/JS core — DONE (core APIs)
+
+Added to the QuickJS bridge: `window`/`self`, `location`, in-memory
+`localStorage`, `document.querySelectorAll`, `getElementsByTagName`,
+`head`, `createTextNode`, `addEventListener` at document/window level with
+`DOMContentLoaded`/`load`, `Element.children`, `parentElement`,
+`firstElementChild`, `classList`, `style` (Proxy -> set_style_property) and
+`innerHTML` (set_inner_html via HtmlProvider).
+
+Verified: codeberg.org inline scripts run with **no JS errors** and the page
+renders with CSS. Remaining for full interactivity: `fetch`/XHR, `URL`,
+forms and history APIs.

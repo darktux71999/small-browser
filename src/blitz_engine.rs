@@ -199,6 +199,7 @@ pub fn build_document_with(
         base_url: base_url.clone(),
         navigation_provider,
         net_provider,
+        html_parser_provider: Some(std::sync::Arc::new(blitz_html::HtmlProvider)),
         ..Default::default()
     };
     // Blitz does not propagate the body background to the canvas, so the
@@ -212,12 +213,14 @@ pub fn build_document_with(
 
     let scripts = extract_inline_scripts(&html);
     let doc_ptr: *mut BaseDocument = &mut *base;
-    let rt = QjsDom::new(doc_ptr);
+    let rt = QjsDom::new(doc_ptr, base_url.clone());
     for (i, script) in scripts.iter().enumerate() {
         if let Err(err) = rt.eval(script, &format!("inline-{i}.js")) {
             eprintln!("browser-lite: js error: {err}");
         }
     }
+    rt.dispatch_document("DOMContentLoaded");
+    rt.dispatch_document("load");
 
     Box::new(JsDocument {
         base,
@@ -341,6 +344,29 @@ const BOOTSTRAP: &str = r#"
     appendChild(child) { __dom_append(this.__id, child.__id); return child; }
     set textContent(value) { __dom_set_text(this.__id, String(value)); }
     get textContent() { return __dom_text(this.__id); }
+    get children() { const raw = __dom_children(this.__id); return raw ? raw.split(",").map(Number).map(function (id) { return new Element(id); }) : []; }
+    get parentElement() { const p = __dom_parent(this.__id); return p < 0 ? null : new Element(p); }
+    get firstElementChild() { const c = this.children; return c.length ? c[0] : null; }
+    get classList() {
+      const id = this.__id;
+      const read = function () { return (new Element(id).getAttribute("class") || "").split(/\s+/).filter(Boolean); };
+      const write = function (list) { new Element(id).setAttribute("class", list.join(" ")); };
+      return {
+        add: function (...classes) { const list = read(); for (const c of classes) if (!list.includes(String(c))) list.push(String(c)); write(list); },
+        remove: function (...classes) { write(read().filter(function (c) { return !classes.includes(c); })); },
+        contains: function (c) { return read().includes(String(c)); },
+        toggle: function (c) { const has = read().includes(String(c)); if (has) this.remove(c); else this.add(c); return !has; },
+      };
+    }
+    get style() {
+      const id = this.__id;
+      return new Proxy({}, {
+        set: function (target, prop, value) { __dom_set_style(id, String(prop), String(value)); target[prop] = value; return true; },
+        get: function (target, prop) { return target[prop]; },
+      });
+    }
+    set innerHTML(value) { __dom_inner_html(this.__id, String(value)); }
+    get innerHTML() { return this.textContent; }
   }
   globalThis.Element = Element;
 
@@ -413,20 +439,56 @@ const BOOTSTRAP: &str = r#"
     __remove_listener(this.__id, String(type), fn);
   };
 
+  const __doc_listeners = new Map();
+  const __doc_add = function (type, fn) { let list = __doc_listeners.get(type); if (!list) { list = []; __doc_listeners.set(type, list); } list.push(fn); };
+  const __doc_remove = function (type, fn) { const list = __doc_listeners.get(type); if (!list) return; const i = list.indexOf(fn); if (i >= 0) list.splice(i, 1); };
+  globalThis.__dispatch_document = function (type) { const list = __doc_listeners.get(type); if (list) for (const fn of list.slice()) fn.call(globalThis, { type: type }); };
+
   const document = {
     get body() { const id = __dom_body(); return id < 0 ? null : new Element(id); },
+    get head() { const id = __dom_query("head"); return id < 0 ? null : new Element(id); },
     get activeElement() { const id = __dom_active(); return id < 0 ? null : new Element(id); },
     getElementById(id) { const n = __dom_get_id(String(id)); return n < 0 ? null : new Element(n); },
     createElement(tag) { return new Element(__dom_create(String(tag))); },
+    createTextNode(text) { return new Element(__dom_create_text(String(text))); },
     querySelector(sel) { const n = __dom_query(String(sel)); return n < 0 ? null : new Element(n); },
-    title: "",
+    querySelectorAll(sel) { const raw = __dom_query_all(String(sel)); return raw ? raw.split(",").map(Number).map(function (id) { return new Element(id); }) : []; },
+    getElementsByTagName(tag) { return this.querySelectorAll(String(tag)); },
+    addEventListener(type, fn) { __doc_add(String(type), fn); },
+    removeEventListener(type, fn) { __doc_remove(String(type), fn); },
+    readyState: "complete",
+    _title: "",
+    get title() { return this._title; },
+    set title(value) { this._title = String(value); },
   };
   globalThis.document = document;
+
+  globalThis.window = globalThis;
+  globalThis.self = globalThis;
+  globalThis.addEventListener = function (type, fn) { __doc_add(String(type), fn); };
+  globalThis.removeEventListener = function (type, fn) { __doc_remove(String(type), fn); };
+
+  const __href = globalThis.__BL_HREF || "about:blank";
+  const __url = /^(https?:)\?\/\/([^/]+)(\/[^?#]*)?/.exec(__href);
+  globalThis.location = __url
+    ? { href: __href, origin: __url[1] + "//" + __url[2], protocol: __url[1], host: __url[2], hostname: __url[2], pathname: __url[3] || "/", search: "", hash: "" }
+    : { href: __href, origin: "null", protocol: "", host: "", hostname: "", pathname: "/", search: "", hash: "" };
+  document.location = globalThis.location;
+
+  const __storage = new Map();
+  globalThis.localStorage = {
+    getItem: function (k) { return __storage.has(String(k)) ? __storage.get(String(k)) : null; },
+    setItem: function (k, v) { __storage.set(String(k), String(v)); },
+    removeItem: function (k) { __storage.delete(String(k)); },
+    clear: function () { __storage.clear(); },
+    key: function (i) { const keys = Array.from(__storage.keys()); return i < keys.length ? keys[i] : null; },
+    get length() { return __storage.size; },
+  };
 })();
 "#;
 
 impl QjsDom {
-    fn new(doc_ptr: *mut BaseDocument) -> QjsDom {
+    fn new(doc_ptr: *mut BaseDocument, href: Option<String>) -> QjsDom {
         unsafe {
             let rt = sys::JS_NewRuntime();
             assert!(!rt.is_null(), "quickjs: JS_NewRuntime failed");
@@ -445,6 +507,12 @@ impl QjsDom {
             install(ctx, global, c"__dom_attr", dom_attr, 2);
             install(ctx, global, c"__dom_tag", dom_tag, 1);
             install(ctx, global, c"__dom_query", dom_query, 1);
+            install(ctx, global, c"__dom_query_all", dom_query_all, 1);
+            install(ctx, global, c"__dom_children", dom_children, 1);
+            install(ctx, global, c"__dom_parent", dom_parent, 1);
+            install(ctx, global, c"__dom_inner_html", dom_inner_html, 2);
+            install(ctx, global, c"__dom_set_style", dom_set_style, 3);
+            install(ctx, global, c"__dom_create_text", dom_create_text, 1);
             install(ctx, global, c"__dom_active", dom_active, 0);
 
             let console = sys::JS_NewObject(ctx);
@@ -454,6 +522,11 @@ impl QjsDom {
             sys::JS_FreeValue(ctx, global);
 
             let runtime = QjsDom { rt, ctx };
+            let href = format!(
+                "globalThis.__BL_HREF = {:?};",
+                href.unwrap_or_else(|| "about:blank".to_string())
+            );
+            runtime.eval(&href, "href.js").ok();
             runtime.eval(BOOTSTRAP, "bootstrap.js").ok();
             runtime
         }
@@ -532,6 +605,14 @@ impl QjsDom {
             let mut ctx: *mut JSContext = std::ptr::null_mut();
             while sys::JS_ExecutePendingJob(self.rt, &mut ctx) > 0 {}
             result
+        }
+    }
+
+    /// Dispatch a document-level event (DOMContentLoaded, load).
+    fn dispatch_document(&self, event: &str) {
+        let source = format!("__dispatch_document(\"{event}\")");
+        if let Err(err) = self.eval(&source, "document-event.js") {
+            eprintln!("browser-lite: js dispatch error: {err}");
         }
     }
 
@@ -630,6 +711,51 @@ unsafe extern "C" fn dom_query(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv
 unsafe extern "C" fn dom_active(ctx: *mut JSContext, _t: JSValue, _c: c_int, _a: *mut JSValue) -> JSValue {
     let focused = doc(ctx).get_focussed_node_id();
     js_int(focused.map(|n| n as i64).unwrap_or(-1))
+}
+
+unsafe extern "C" fn dom_query_all(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv: *mut JSValue) -> JSValue {
+    let selector = arg_string(ctx, argv, 0);
+    let ids = doc(ctx)
+        .query_selector_all(&selector)
+        .map(|nodes| nodes.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","))
+        .unwrap_or_default();
+    string_value(ctx, &ids)
+}
+
+unsafe extern "C" fn dom_children(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv: *mut JSValue) -> JSValue {
+    let id = arg_int(ctx, argv, 0) as usize;
+    let ids = doc(ctx)
+        .get_node(id)
+        .map(|node| node.children.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(","))
+        .unwrap_or_default();
+    string_value(ctx, &ids)
+}
+
+unsafe extern "C" fn dom_parent(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv: *mut JSValue) -> JSValue {
+    let id = arg_int(ctx, argv, 0) as usize;
+    let parent = doc(ctx).get_node(id).and_then(|node| node.parent);
+    js_int(parent.map(|p| p as i64).unwrap_or(-1))
+}
+
+unsafe extern "C" fn dom_inner_html(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv: *mut JSValue) -> JSValue {
+    let id = arg_int(ctx, argv, 0) as usize;
+    let html = arg_string(ctx, argv, 1);
+    doc(ctx).mutate().set_inner_html(id, &html);
+    JSValue::undefined()
+}
+
+unsafe extern "C" fn dom_set_style(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv: *mut JSValue) -> JSValue {
+    let id = arg_int(ctx, argv, 0) as usize;
+    let name = arg_string(ctx, argv, 1);
+    let value = arg_string(ctx, argv, 2);
+    doc(ctx).mutate().set_style_property(id, &name, &value);
+    JSValue::undefined()
+}
+
+unsafe extern "C" fn dom_create_text(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv: *mut JSValue) -> JSValue {
+    let text = arg_string(ctx, argv, 0);
+    let id = doc(ctx).mutate().create_text_node(&text);
+    js_int(id as i64)
 }
 
 unsafe extern "C" fn dom_create(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv: *mut JSValue) -> JSValue {
