@@ -34,6 +34,11 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - S10: `element.addEventListener(type, fn)` registra listeners y un click real
   (winit -> UiEvent::MouseUp) burbujea target->root y ejecuta el handler, que
   puede mutar el DOM y verse en el siguiente frame.
+- S11: `Store` persiste historial y cookies en SQLite del sistema: `open`
+  crea el esquema, `open_memory` da una base en memoria, `push_history` /
+  `recent_history` / `clear_history` gestionan el historial, `set_cookie` /
+  `cookies_for` las cookies por dominio. Todo fallo se devuelve como `Err`,
+  nunca panic.
 
 ## Tasks
 
@@ -45,6 +50,7 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - T6 [S7] inline — 7 tests + fixtures demo/nojs — DONE
 - T7 [S8,S9] inline — Blitz renderer + puente DOM QuickJS — DONE
 - T8 [S10] inline — eventos click + bubbling + addEventListener — DONE
+- T9 [S11] inline — storage SQLite (Store + tests) — DONE
 
 ## Log
 
@@ -94,3 +100,17 @@ pasó de "waiting" a "clicked: click" (captura verificada). El trait
 EventHandler de Blitz 0.2.4 no es implementable fuera de la crate porque
 EventState no se exporta: se intercepta handle_ui_event y se hace hit-test con
 set_hover_to + get_hover_node_id, construyendo la cadena con Node::parent.
+
+L9 (T5 storage, plan.md wave 1): `src/storage.rs` nuevo con `Store` sobre
+SQLite del sistema (rusqlite 0.40 enlazado a libsqlite3 del sistema, sin
+`bundled`): `open` / `open_memory` crean el esquema con `CREATE TABLE IF NOT
+EXISTS` para `history` y `cookies`; `push_history` / `recent_history` (más
+reciente primero, con límite) / `clear_history`; `set_cookie` (upsert por
+dominio+nombre) / `cookies_for` (ordenado por nombre). `HistoryEntry` se
+define aquí: `src/history.rs` es el modelo de navegación por pestaña y queda
+congelado. Todo error de SQL se devuelve como `Err`, sin panic.
+Evidencia: RED observado (`error[E0583]: file not found for module storage`),
+GREEN con `cargo test --test storage` 6/6. Desviación de ownership: se
+añade una línea `pub mod storage;` en `src/lib.rs`, que ningún agente posee
+en la wave 1, porque el módulo no es visible sin registrarla.
+Pendiente: T5 no se integra en la UI (eso es T8 en wave 2).

@@ -10,6 +10,7 @@ pub mod nav;
 pub mod net;
 pub mod paint;
 pub mod shell;
+pub mod storage;
 pub mod sys;
 pub mod tabs;
 pub mod url;
