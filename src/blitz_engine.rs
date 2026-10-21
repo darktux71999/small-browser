@@ -216,7 +216,8 @@ pub fn run_documents(docs: Vec<Box<dyn Document>>) -> Result<(), String> {
     let event_loop = create_default_event_loop();
     let mut application = BlitzApplication::new(event_loop.create_proxy());
     for doc in docs {
-        let renderer = anyrender_vello::VelloWindowRenderer::new();
+        // CPU renderer: the vello/wgpu path faults on NVK/Kepler.
+        let renderer = anyrender_vello_cpu::VelloCpuWindowRenderer::new();
         application.add_window(WindowConfig::new(doc, renderer));
     }
     event_loop

@@ -245,11 +245,10 @@ Measured: 666 traps in 5 seconds for one `blitz-tabs` process. The official
 Blitz example shows the same unpainted/transparent regions. The SDL3 spike
 produces zero traps.
 
-Decision: `blitz-tabs` now uses the CPU renderer
+Decision: both `blitz-tabs` and `blitz-lite` now use the CPU renderer
 `anyrender_vello_cpu = 0.8.1` (`softbuffer`), which is the version matching
-Blitz 0.2.4's `anyrender 0.6.x`. `blitz-lite` still uses the GPU renderer
-because `src/bin/blitz-lite.rs` belongs to T4; after T4 lands, switch it too.
-Keep `anyrender_vello` as an optional dependency for machines where the GPU
+Blitz 0.2.4's `anyrender 0.6.x`. `blitz_engine::run_documents` (used by `blitz-lite`) was switched to CPU after
+T4 landed. Keep `anyrender_vello` as an optional dependency for machines where the GPU
 path works.
 
 This also means visual artifacts on this GPU are not trustworthy evidence;

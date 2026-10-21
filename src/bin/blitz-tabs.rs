@@ -46,7 +46,7 @@ impl TabbedApp {
             return Ok(NEW_TAB_HTML.to_string());
         }
         if url::is_http(target) {
-            net::fetch(target).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            net::fetch_text(target)
         } else {
             std::fs::read_to_string(target).map_err(|e| format!("{target}: {e}"))
         }
