@@ -44,6 +44,12 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
   soportados), falla con `Err` y la línea de estado cuando el estado HTTP es
   >= 400, expone la URL final tras las redirecciones y ofrece una variante
   asíncrona que descarga en un hilo y entrega el resultado por un canal.
+- S13: `CookieJar` guarda cookies de `Set-Cookie` y decide cuáles enviar a
+  cada URL: cookies de host y de dominio, prefijo de ruta y caducidad por
+  marca de tiempo absoluta. `Secure` y `HttpOnly` se leen pero todavía no se
+  aplican. El jar persiste y se recupera a través del `Store` de SQLite, y
+  `net::fetch_with_cookies` envía la cabecera `Cookie` y captura cada
+  `Set-Cookie` de la respuesta, incluidas las de una cadena de redirecciones.
 
 ## Tasks
 
@@ -57,6 +63,7 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - T8 [S10] inline — eventos click + bubbling + addEventListener — DONE
 - T9 [S11] inline — storage SQLite (Store + tests) — DONE
 - T10 [S12] inline — networking v2 (charset, status, URL final, async) — DONE
+- T11 [S13] inline — cookie jar + persistencia (CookieJar, Store) — DONE
 
 ## Log
 
@@ -145,3 +152,26 @@ devolvía el cuerpo de error), así que `src/bin/blitz-tabs.rs:49`, que aún
 usa `fetch` + UTF-8 lossy, debería migrar a `fetch_text`. El charset
 desconocido cae a UTF-8 con aviso en stderr, para no dejar la página en
 blanco.
+
+L11 (T11 cookie jar, plan.md wave 1.5): `src/cookies.rs` nuevo con `Cookie` y
+`CookieJar`: `set_from_header(url, valor)` parsea `Set-Cookie`
+(nombre=valor; Domain; Path; Secure; HttpOnly; Expires; Max-Age), `header_for(url)`
+devuelve la cabecera `Cookie` de las que casan, y `store`/`load` persisten a
+través del `Store`. Casamiento: host-only (host exacto) y de dominio
+(suffix con punto), prefijo de ruta con la regla de los límites de segmento
+(RFC 6265), y caducidad por marca de tiempo absoluta; `Max-Age` gana sobre
+`Expires`. `Secure` y `HttpOnly` se guardan pero no se aplican todavía.
+`net::fetch_with_cookies(url, &CookieJar)` envía la cabecera `Cookie` y
+devuelve los `Set-Cookie` capturados como pares `(url, valor)`, atribuyendo
+cada cookie a la URL cuya respuesta la trajo: en una cadena de redirecciones
+el `Location` sólo pasa a ser la URL actual cuando empieza la respuesta
+siguiente.
+En `src/storage.rs` la tabla `cookies` crece con `path`, `host_only`,
+`secure`, `http_only` y `expires` (clave primaria dominio+nombre+ruta) y hay
+una migración que borra y recrea la tabla antigua; `set_cookie`/`cookies_for`
+siguen igual. Nuevos: `store_cookie`, `load_cookies`, `clear_cookies`.
+Evidencia: RED observado (E0432 por `browser_lite::cookies`) y GREEN con
+`cargo test --test cookies` 10/10 (set, eco, ámbito de dominio, ámbito de
+ruta, caducidad, persistencia tras reabrir el `Store`, y captura de
+`Set-Cookie` en una redirección). Pendiente: integración con la UI (eso es
+T8); `document.cookie` aún no existe en la API del DOM.

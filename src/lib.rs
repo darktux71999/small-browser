@@ -1,6 +1,7 @@
 //! browser-lite: lightweight desktop browser built on the system stack.
 //! Modules are public so tests and future embedders reuse the same engine.
 
+pub mod cookies;
 pub mod css;
 pub mod dom;
 pub mod history;

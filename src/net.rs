@@ -9,7 +9,10 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
-use curl::easy::Easy;
+use curl::easy::{Easy, List};
+use url::Url;
+
+use crate::cookies::CookieJar;
 
 const USER_AGENT: &str = "browser-lite/0.1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -23,6 +26,17 @@ pub struct FetchResult {
     pub final_url: String,
     /// The raw body.
     pub bytes: Vec<u8>,
+}
+
+/// A fetch that also collected the cookies the server set.
+#[derive(Debug, Clone)]
+pub struct CookieFetch {
+    /// The response.
+    pub result: FetchResult,
+    /// The `Set-Cookie` headers of the response, in the order the server sent
+    /// them. Each pair holds the URL whose response carried the header, so a
+    /// redirect chain keeps the right origin for every cookie.
+    pub set_cookies: Vec<(String, String)>,
 }
 
 /// Fetch a URL and return the raw body.
@@ -60,6 +74,23 @@ pub fn fetch_text_async(url: &str) -> Receiver<Result<String, String>> {
     spawn_fetch(url, fetch_text)
 }
 
+/// Fetch a URL sending the cookies of `jar` and collecting the ones the
+/// server sets.
+///
+/// The jar is not modified: the `Set-Cookie` headers come back with the
+/// response, so the caller decides which ones to keep.
+pub fn fetch_with_cookies(url: &str, jar: &CookieJar) -> Result<CookieFetch, String> {
+    let cookie = jar.header_for(url);
+    let raw = request_with(url, cookie.as_deref())?;
+    Ok(CookieFetch {
+        result: FetchResult {
+            final_url: raw.final_url,
+            bytes: raw.bytes,
+        },
+        set_cookies: raw.set_cookies,
+    })
+}
+
 fn spawn_fetch<T, F>(url: &str, fetch: F) -> Receiver<Result<T, String>>
 where
     F: FnOnce(&str) -> Result<T, String> + Send + 'static,
@@ -78,9 +109,14 @@ struct Raw {
     final_url: String,
     bytes: Vec<u8>,
     content_type: Option<String>,
+    set_cookies: Vec<(String, String)>,
 }
 
 fn request(url: &str) -> Result<Raw, String> {
+    request_with(url, None)
+}
+
+fn request_with(url: &str, cookie_header: Option<&str>) -> Result<Raw, String> {
     let mut easy = Easy::new();
     easy.url(url).map_err(|e| format!("invalid URL {url}: {e}"))?;
     easy.follow_location(true)
@@ -96,9 +132,22 @@ fn request(url: &str) -> Result<Raw, String> {
     // Let libcurl negotiate and decode compressed responses.
     easy.accept_encoding("gzip, deflate")
         .map_err(|e| format!("encoding: {e}"))?;
+    if let Some(cookie) = cookie_header {
+        let mut headers = List::new();
+        headers
+            .append(&format!("Cookie: {cookie}"))
+            .map_err(|e| format!("cookie header: {e}"))?;
+        easy.http_headers(headers)
+            .map_err(|e| format!("headers: {e}"))?;
+    }
 
     let mut body = Vec::new();
     let mut status_line = String::new();
+    let mut set_cookies: Vec<(String, String)> = Vec::new();
+    // The URL of the response being read. A `Location` header points at the
+    // next response, so it only becomes current when that response starts.
+    let mut current_url = url.to_string();
+    let mut next_url: Option<String> = None;
     {
         let mut transfer = easy.transfer();
         transfer
@@ -115,6 +164,23 @@ fn request(url: &str) -> Result<Raw, String> {
                 let line = line.trim_end_matches(['\r', '\n']);
                 if line.starts_with("HTTP/") {
                     status_line = line.to_string();
+                    if let Some(next) = next_url.take() {
+                        current_url = next;
+                    }
+                } else if let Some((name, value)) = line.split_once(':') {
+                    match name.trim().to_ascii_lowercase().as_str() {
+                        "set-cookie" => {
+                            set_cookies.push((current_url.clone(), value.trim().to_string()));
+                        }
+                        "location" => {
+                            if let Ok(base) = Url::parse(&current_url) {
+                                if let Ok(next) = base.join(value.trim()) {
+                                    next_url = Some(next.to_string());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 true
             })
@@ -146,6 +212,7 @@ fn request(url: &str) -> Result<Raw, String> {
         final_url,
         bytes: body,
         content_type,
+        set_cookies,
     })
 }
 

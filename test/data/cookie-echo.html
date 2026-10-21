@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head>
+  <title>cookie-echo</title>
+</head>
+<body>
+  <h1>Cookie echo</h1>
+  <p id="out">waiting</p>
+  <script>
+    // Shows the cookies the browser sent with the request.
+    document.getElementById("out").textContent = "sent: " + (document.cookie || "none");
+  </script>
+</body>
+</html>

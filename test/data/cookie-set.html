@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+  <title>cookie-set</title>
+</head>
+<body>
+  <h1>Cookie set</h1>
+  <p id="out">waiting</p>
+  <script>
+    // Sets a cookie from the page. The cookie layer is wired into the network
+    // stack; this fixture is the manual check for it.
+    document.cookie = "demo=1; Path=/";
+    document.getElementById("out").textContent = "cookie requested";
+  </script>
+</body>
+</html>
