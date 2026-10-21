@@ -230,3 +230,27 @@ Report: files changed, screenshots taken, blockers.
   blank.
 - Our `handle_ui_event` bypasses Blitz's default click action; links are
   resolved manually in `follow_link`.
+
+## GPU finding (important)
+
+On this machine (GeForce GT 730 / NVK, Vulkan 1.2) the wgpu/vello path spams the
+kernel ring with GPU faults while rendering a single page:
+
+```
+nouveau: gr: TRAP ch 8 [blitz-tabs[PID]]
+nouveau: gr: GPC0/TPC0/MP trap: ... [OOR_ADDR]
+```
+
+Measured: 666 traps in 5 seconds for one `blitz-tabs` process. The official
+Blitz example shows the same unpainted/transparent regions. The SDL3 spike
+produces zero traps.
+
+Decision: `blitz-tabs` now uses the CPU renderer
+`anyrender_vello_cpu = 0.8.1` (`softbuffer`), which is the version matching
+Blitz 0.2.4's `anyrender 0.6.x`. `blitz-lite` still uses the GPU renderer
+because `src/bin/blitz-lite.rs` belongs to T4; after T4 lands, switch it too.
+Keep `anyrender_vello` as an optional dependency for machines where the GPU
+path works.
+
+This also means visual artifacts on this GPU are not trustworthy evidence;
+verify rendering with the CPU backend.

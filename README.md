@@ -54,6 +54,11 @@ src/sys.rs     FFI de liblexbor y libqjs
 Regla de dependencias: `shell -> paint -> layout -> css -> dom`, y `js` no
 depende de UI. Nada incluye `shell` hacia abajo.
 
+## Renderer
+
+`blitz-tabs` usa el backend CPU (`anyrender_vello_cpu`, softbuffer): la GPU
+(NVK/Kepler) genera traps `OOR_ADDR` con vello/wgpu en esta máquina.
+
 ## Estado
 
 Corte 1 completo en el motor propio. Corte 2: `blitz-lite` renderiza con

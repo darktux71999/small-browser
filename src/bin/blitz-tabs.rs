@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use anyrender_vello::VelloWindowRenderer;
+use anyrender_vello_cpu::VelloCpuWindowRenderer;
 use blitz_shell::{
     create_default_event_loop, BlitzApplication, BlitzShellEvent, View, WindowConfig,
 };
@@ -29,7 +29,7 @@ h1 { color: #0b5; }
 </style></head><body><h1>New tab</h1><p>Ctrl+T new · Ctrl+W close · Ctrl+Tab cycle</p></body></html>"#;
 
 struct TabbedApp {
-    app: BlitzApplication<VelloWindowRenderer>,
+    app: BlitzApplication<VelloCpuWindowRenderer>,
     proxy: EventLoopProxy<BlitzShellEvent>,
     tabs: Tabs,
     by_window: HashMap<WindowId, u64>,
@@ -84,7 +84,7 @@ impl TabbedApp {
         };
         let doc_id = doc.id();
         let tab_id = self.tabs.open(target);
-        let config = WindowConfig::new(doc, VelloWindowRenderer::new());
+        let config = WindowConfig::new(doc, VelloCpuWindowRenderer::new());
         let mut view = View::init(config, event_loop, &self.proxy);
         view.resume();
         let window_id = view.window_id();
