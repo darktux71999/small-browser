@@ -14,8 +14,10 @@ fn main() -> ExitCode {
     };
 
     let html = if url::is_http(&target) {
-        match net::fetch(&target) {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        // `fetch_text` decodes the body with the charset declared in the
+        // `Content-Type` header, instead of guessing UTF-8.
+        match net::fetch_text(&target) {
+            Ok(text) => text,
             Err(err) => {
                 eprintln!("blitz-lite: {err}");
                 return ExitCode::from(1);

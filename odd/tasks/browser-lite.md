@@ -39,6 +39,11 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
   `recent_history` / `clear_history` gestionan el historial, `set_cookie` /
   `cookies_for` las cookies por dominio. Todo fallo se devuelve como `Err`,
   nunca panic.
+- S12: el cliente HTTP decodifica el cuerpo con el charset declarado en
+  `Content-Type` (UTF-8 por defecto; ISO-8859-1/windows-1252 y UTF-16
+  soportados), falla con `Err` y la línea de estado cuando el estado HTTP es
+  >= 400, expone la URL final tras las redirecciones y ofrece una variante
+  asíncrona que descarga en un hilo y entrega el resultado por un canal.
 
 ## Tasks
 
@@ -51,6 +56,7 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - T7 [S8,S9] inline — Blitz renderer + puente DOM QuickJS — DONE
 - T8 [S10] inline — eventos click + bubbling + addEventListener — DONE
 - T9 [S11] inline — storage SQLite (Store + tests) — DONE
+- T10 [S12] inline — networking v2 (charset, status, URL final, async) — DONE
 
 ## Log
 
@@ -114,3 +120,28 @@ GREEN con `cargo test --test storage` 6/6. Desviación de ownership: se
 añade una línea `pub mod storage;` en `src/lib.rs`, que ningún agente posee
 en la wave 1, porque el módulo no es visible sin registrarla.
 Pendiente: T5 no se integra en la UI (eso es T8 en wave 2).
+
+L10 (T4 networking v2, plan.md wave 1): `src/net.rs` reescrito sobre el
+mismo libcurl. `fetch` conserva su firma; `fetch_result` devuelve
+`FetchResult { final_url, bytes }` con la URL tras las redirecciones;
+`fetch_text` decodifica con el charset de `Content-Type` (UTF-8 por defecto,
+ISO-8859-1/US-ASCII/windows-1252 decodificados como windows-1252, UTF-16 con
+o sin BOM, BOM UTF-8 eliminado); `fetch_async` / `fetch_result_async` /
+`fetch_text_async` descargan en un hilo y entregan el resultado por
+`std::sync::mpsc`. Un estado >= 400 devuelve `Err` con la línea de estado real
+(capturada en `header_function`; en una cadena de redirecciones gana la
+última). `src/bin/blitz-lite.rs` usa ya `fetch_text` y sale con código 1 y
+mensaje legible ante un error HTTP.
+Evidencia: RED observado (E0432 por la API nueva) y GREEN con
+`cargo test --test net` 11/11, con un servidor HTTP mínimo dentro del propio
+test (200, 404, 302 y charset). Manual con `python3 -m http.server 8765`:
+`blitz-lite http://127.0.0.1:8765/test/data/net-404.html` imprime
+`HTTP/1.0 404 File not found` y sale con 1. Con un servidor que declara
+`charset=iso-8859-1`, la página muestra "café" correctamente (captura), y
+tras un 302 el título de la ventana es el de la página final.
+Notas: `test/data/net-404.html` NO existe a propósito — la aceptación exige
+que esa URL devuelva 404. `net::fetch` ahora falla con estados >= 400 (antes
+devolvía el cuerpo de error), así que `src/bin/blitz-tabs.rs:49`, que aún
+usa `fetch` + UTF-8 lossy, debería migrar a `fetch_text`. El charset
+desconocido cae a UTF-8 con aviso en stderr, para no dejar la página en
+blanco.
