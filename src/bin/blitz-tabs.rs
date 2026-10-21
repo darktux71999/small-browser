@@ -9,6 +9,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyrender_vello_cpu::VelloCpuWindowRenderer;
+use blitz_dom::net::Resource;
+use blitz_traits::net::NetProvider;
 use blitz_shell::{
     create_default_event_loop, BlitzApplication, BlitzShellEvent, View, WindowConfig,
 };
@@ -36,6 +38,7 @@ struct TabbedApp {
     by_doc: HashMap<usize, u64>,
     mods: ModifiersState,
     queue: NavQueue,
+    net: Arc<dyn NetProvider<Resource>>,
     initial: Vec<String>,
     started: bool,
 }
@@ -71,6 +74,7 @@ impl TabbedApp {
             &html,
             Self::base_url(target),
             Some(provider),
+            Some(self.net.clone()),
         ))
     }
 
@@ -299,8 +303,18 @@ fn main() -> ExitCode {
         targets.push("about:blank".to_string());
     }
 
+    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!("blitz-tabs: tokio runtime: {err}");
+            return ExitCode::from(1);
+        }
+    };
+    let _guard = runtime.enter();
+
     let event_loop = create_default_event_loop();
     let proxy = event_loop.create_proxy();
+    let net = blitz_engine::net_provider(proxy.clone());
     let app = BlitzApplication::new(proxy.clone());
 
     let mut tabbed = TabbedApp {
@@ -311,6 +325,7 @@ fn main() -> ExitCode {
         by_doc: HashMap::new(),
         mods: ModifiersState::empty(),
         queue: NavQueue::new(),
+        net,
         initial: targets,
         started: false,
     };

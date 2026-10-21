@@ -40,8 +40,7 @@ fn main() -> ExitCode {
     } else {
         url::file_url(&target)
     };
-    let doc = browser_lite::blitz_engine::build_document_with(&html, base, None);
-    match browser_lite::blitz_engine::run_documents(vec![doc]) {
+    match browser_lite::blitz_engine::run_html(&html, base) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("blitz-lite: {err}");

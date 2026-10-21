@@ -281,11 +281,12 @@ Scope:
 Acceptance: `cargo test --test cookies` green; existing net/store tests stay
 green. No UI integration yet.
 
-### T8 (Agent A / me) — Subresources
+### T8 (Agent A / me) — Subresources — DONE
 
 Owns: `Cargo.toml` (`blitz-net`), `src/blitz_engine.rs`,
 `src/bin/blitz-lite.rs`, `src/bin/blitz-tabs.rs`.
 
-Wire `blitz_net::Provider` and the tokio runtime so `<link rel=stylesheet>`,
-images and fonts load; pass the provider through `DocumentConfig` and let
-`BlitzApplication` handle `ResourceLoad`. Then retest codeberg.org.
+Wired `blitz_net::Provider` + tokio runtime through `DocumentConfig`; Blitz
+handles `ResourceLoad`. Verified: codeberg.org renders its CSS (blue nav, hero,
+footer columns) with zero GPU traps. `blitz-lite` uses `run_html`; `blitz-tabs`
+shares one provider across tabs.

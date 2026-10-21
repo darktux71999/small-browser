@@ -5,14 +5,17 @@
 //! the rendering stack is Blitz's, the engine is ours.
 
 use std::any::Any;
+use std::sync::Arc;
 use std::ops::{Deref, DerefMut};
 use std::os::raw::{c_char, c_int, c_void};
 
+use blitz_dom::net::Resource;
 use blitz_dom::{BaseDocument, Document, DocumentConfig};
 use blitz_html::HtmlDocument;
-use blitz_shell::{create_default_event_loop, BlitzApplication, WindowConfig};
+use blitz_shell::{create_default_event_loop, BlitzApplication, BlitzShellNetCallback, WindowConfig};
 use blitz_traits::events::UiEvent;
 use blitz_traits::navigation::NavigationOptions;
+use blitz_traits::net::NetProvider;
 use markup5ever::{ns, LocalName, QualName};
 
 use crate::sys::{self, JSContext, JSValue, JSValueUnion};
@@ -163,7 +166,16 @@ impl JsDocument {
 /// Parse HTML, run its inline scripts with QuickJS, and return a renderable
 /// document. Used by both the single-window and tabbed entry points.
 pub fn build_document(html: &str) -> Box<dyn Document> {
-    build_document_with(html, None, None)
+    build_document_with(html, None, None, None)
+}
+
+/// Net provider that injects fetched subresources (CSS, images, fonts) into
+/// the Blitz shell event loop.
+pub fn net_provider(
+    proxy: blitz_shell::EventLoopProxy<blitz_shell::BlitzShellEvent>,
+) -> Arc<dyn NetProvider<Resource>> {
+    let callback = BlitzShellNetCallback::shared(proxy);
+    Arc::new(blitz_net::Provider::new(callback))
 }
 
 /// Build a document with a base URL (for relative links) and an optional
@@ -172,6 +184,7 @@ pub fn build_document_with(
     html: &str,
     base_url: Option<String>,
     navigation_provider: Option<std::sync::Arc<dyn blitz_traits::navigation::NavigationProvider>>,
+    net_provider: Option<Arc<dyn NetProvider<Resource>>>,
 ) -> Box<dyn Document> {
     // `ua_stylesheets: Some(..)` makes blitz-html append its DEFAULT_CSS
     // (display:block defaults etc.). Without it every box collapses.
@@ -179,6 +192,7 @@ pub fn build_document_with(
         ua_stylesheets: Some(Vec::new()),
         base_url: base_url.clone(),
         navigation_provider,
+        net_provider,
         ..Default::default()
     };
     // Blitz does not propagate the body background to the canvas, so the
@@ -209,6 +223,27 @@ pub fn build_document_with(
 /// Show one document.
 pub fn run(html: &str) -> Result<(), String> {
     run_documents(vec![build_document(html)])
+}
+
+/// Show one HTML document with subresource loading enabled.
+pub fn run_html(html: &str, base_url: Option<String>) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("tokio runtime: {e}"))?;
+    let _guard = runtime.enter();
+
+    let event_loop = create_default_event_loop();
+    let provider = net_provider(event_loop.create_proxy());
+    let doc = build_document_with(html, base_url, None, Some(provider));
+
+    let renderer = anyrender_vello_cpu::VelloCpuWindowRenderer::new();
+    let window = WindowConfig::new(doc, renderer);
+    let mut application = BlitzApplication::new(event_loop.create_proxy());
+    application.add_window(window);
+    event_loop
+        .run_app(&mut application)
+        .map_err(|e| format!("event loop: {e}"))
 }
 
 /// Show one window per document (each window is a tab in the current MVP).
