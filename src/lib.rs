@@ -10,6 +10,7 @@ pub mod layout;
 pub mod nav;
 pub mod net;
 pub mod paint;
+pub mod sandbox;
 pub mod shell;
 pub mod storage;
 pub mod sys;
