@@ -11,16 +11,18 @@ use std::os::raw::{c_char, c_int, c_void};
 use blitz_dom::{BaseDocument, Document, DocumentConfig};
 use blitz_html::HtmlDocument;
 use blitz_shell::{create_default_event_loop, BlitzApplication, WindowConfig};
+use blitz_traits::events::UiEvent;
 use markup5ever::{ns, LocalName, QualName};
 
 use crate::sys::{self, JSContext, JSValue, JSValueUnion};
 
-/// A Blitz document that has already executed its inline scripts.
+/// A Blitz document with a persistent QuickJS context and its scripts executed.
 ///
-/// Scripts run eagerly before the first layout, so the initial frame already
-/// contains the DOM mutations they produced.
+/// `base` lives in a `Box` so its address stays stable while the document is
+/// moved into the window: QuickJS callbacks hold a raw pointer to it.
 pub struct JsDocument {
-    base: BaseDocument,
+    base: Box<BaseDocument>,
+    rt: QjsDom,
 }
 
 impl Deref for JsDocument {
@@ -37,6 +39,33 @@ impl DerefMut for JsDocument {
 }
 
 impl Document for JsDocument {
+    fn handle_ui_event(&mut self, event: UiEvent) {
+        match event {
+            UiEvent::MouseMove(e) => {
+                self.base.set_hover_to(e.x, e.y);
+            }
+            UiEvent::MouseDown(_) => {
+                self.base.active_node();
+            }
+            UiEvent::MouseUp(e) => {
+                // Hit-test at the release position, then bubble "click".
+                self.base.set_hover_to(e.x, e.y);
+                self.base.unactive_node();
+                let mut chain = Vec::new();
+                let mut current = self.base.get_hover_node_id();
+                while let Some(id) = current {
+                    chain.push(id);
+                    current = self.base.get_node(id).and_then(|n| n.parent);
+                }
+                for id in chain {
+                    self.rt.dispatch(id, "click");
+                }
+                self.base.shell_provider.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -51,20 +80,18 @@ pub fn run(html: &str) -> Result<(), String> {
         ..Default::default()
     };
     let parsed = HtmlDocument::from_html(html, config);
-    let mut base: BaseDocument = parsed.into();
+    let mut base = Box::new(BaseDocument::from(parsed));
 
     let scripts = extract_inline_scripts(html);
-    if !scripts.is_empty() {
-        let doc_ptr: *mut BaseDocument = &mut base;
-        let runtime = QjsDom::new(doc_ptr);
-        for (i, script) in scripts.iter().enumerate() {
-            if let Err(err) = runtime.eval(script, &format!("inline-{i}.js")) {
-                eprintln!("browser-lite: js error: {err}");
-            }
+    let doc_ptr: *mut BaseDocument = &mut *base;
+    let rt = QjsDom::new(doc_ptr);
+    for (i, script) in scripts.iter().enumerate() {
+        if let Err(err) = rt.eval(script, &format!("inline-{i}.js")) {
+            eprintln!("browser-lite: js error: {err}");
         }
     }
 
-    let doc = JsDocument { base };
+    let doc = JsDocument { base, rt };
 
     let event_loop = create_default_event_loop();
     let renderer = anyrender_vello::VelloWindowRenderer::new();
@@ -97,6 +124,42 @@ const BOOTSTRAP: &str = r#"
     get textContent() { return __dom_text(this.__id); }
   }
   globalThis.Element = Element;
+
+  const __listeners = new Map();
+  globalThis.__add_listener = function (id, type, fn) {
+    let byType = __listeners.get(id);
+    if (!byType) { byType = new Map(); __listeners.set(id, byType); }
+    let list = byType.get(type);
+    if (!list) { list = []; byType.set(type, list); }
+    list.push(fn);
+  };
+  globalThis.__remove_listener = function (id, type, fn) {
+    const byType = __listeners.get(id);
+    if (!byType) return;
+    const list = byType.get(type);
+    if (!list) return;
+    const idx = list.indexOf(fn);
+    if (idx >= 0) list.splice(idx, 1);
+  };
+  globalThis.__dispatch = function (id, type) {
+    const byType = __listeners.get(id);
+    if (!byType) return 0;
+    const list = byType.get(type);
+    if (!list || !list.length) return 0;
+    const self = new Element(id);
+    const event = { type: type, target: self, defaultPrevented: false,
+                    preventDefault() { this.defaultPrevented = true; },
+                    stopPropagation() {} };
+    for (const fn of list.slice()) fn.call(self, event);
+    return 1;
+  };
+
+  Element.prototype.addEventListener = function (type, fn) {
+    __add_listener(this.__id, String(type), fn);
+  };
+  Element.prototype.removeEventListener = function (type, fn) {
+    __remove_listener(this.__id, String(type), fn);
+  };
 
   const document = {
     get body() { const id = __dom_body(); return id < 0 ? null : new Element(id); },
@@ -166,8 +229,15 @@ impl QjsDom {
         }
     }
 
-    fn take_exception(&self) -> String {
-        unsafe {
+    /// Call the JS listener registry for one node and event name.
+    fn dispatch(&self, id: usize, event: &str) {
+        let source = format!("__dispatch({id}, \"{event}\")");
+        if let Err(err) = self.eval(&source, "dispatch.js") {
+            eprintln!("browser-lite: js dispatch error: {err}");
+        }
+    }
+
+    fn take_exception(&self) -> String {        unsafe {
             let exc = sys::JS_GetException(self.ctx);
             let mut len = 0usize;
             let ptr = sys::JS_ToCStringLen2(self.ctx, &mut len, exc, false);

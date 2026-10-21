@@ -56,7 +56,8 @@ depende de UI. Nada incluye `shell` hacia abajo.
 
 Corte 1 completo en el motor propio. Corte 2: `blitz-lite` renderiza con
 Blitz y QuickJS muta el DOM (`getElementById`, `createElement`,
-`appendChild`, `setAttribute`, `textContent`, `querySelector`). 7 tests
+`appendChild`, `setAttribute`, `textContent`, `querySelector`), y eventos
+`addEventListener('click')` con bubbling. 7 tests
 verdes en el motor propio; el puente Blitz se verifica por captura.
 
 Siguiente: eventos (`addEventListener`/click), timers y navegación real.

@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #f6f7f9; color: #222; padding: 24px; }
+    button { font-size: 20px; padding: 14px 22px; border-radius: 8px; border: 0;
+             background: #0b5; color: white; }
+    p { margin-top: 20px; font-size: 20px; }
+  </style>
+</head>
+<body>
+  <button id="b">Click me</button>
+  <p id="out">waiting</p>
+  <script>
+    document.getElementById("b").addEventListener("click", function (ev) {
+      console.log("click handled", ev.type);
+      document.getElementById("out").textContent = "clicked: " + ev.type;
+    });
+  </script>
+</body>
+</html>

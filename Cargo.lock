@@ -674,6 +674,7 @@ dependencies = [
  "blitz-dom",
  "blitz-html",
  "blitz-shell",
+ "blitz-traits",
  "cairo-rs",
  "markup5ever",
 ]

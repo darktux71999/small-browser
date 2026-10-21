@@ -11,6 +11,7 @@ blitz-engine = [
     "dep:blitz-shell",
     "dep:anyrender_vello",
     "dep:markup5ever",
+    "dep:blitz-traits",
 ]
 
 [dependencies]
@@ -21,6 +22,7 @@ blitz-html = { version = "0.2.0", optional = true }
 blitz-shell = { version = "0.2.3", optional = true }
 anyrender_vello = { version = "0.6.2", optional = true }
 markup5ever = { version = "0.35", optional = true }
+blitz-traits = { version = "0.2.0", optional = true }
 
 [profile.release]
 opt-level = 2

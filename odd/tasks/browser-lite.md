@@ -31,6 +31,9 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - S9: QuickJS ejecuta los `<script>` inline sobre el DOM de Blitz: soporta
   `document.getElementById/body/createElement/querySelector`, `appendChild`,
   `setAttribute`, `textContent`, y las mutaciones se reflejan en el render.
+- S10: `element.addEventListener(type, fn)` registra listeners y un click real
+  (winit -> UiEvent::MouseUp) burbujea target->root y ejecuta el handler, que
+  puede mutar el DOM y verse en el siguiente frame.
 
 ## Tasks
 
@@ -41,6 +44,7 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - T5 [S6] inline — QuickJS runtime — DONE
 - T6 [S7] inline — 7 tests + fixtures demo/nojs — DONE
 - T7 [S8,S9] inline — Blitz renderer + puente DOM QuickJS — DONE
+- T8 [S10] inline — eventos click + bubbling + addEventListener — DONE
 
 ## Log
 
@@ -83,3 +87,10 @@ todo colapsa; el trait Document de 0.2.4 es Deref<Target=BaseDocument>;
 `set_node_text` solo aplica a nodos Text, así que `textContent` = remove
 children + create_text_node + append; los scripts corren antes del primer
 layout para que el frame inicial ya tenga las mutaciones.
+
+L8 (evidencia): click real vía XTest sobre `test/data/events.html`: la cadena
+fue [10,8,1,0] (button, body, html, document), el handler corrió y el texto
+pasó de "waiting" a "clicked: click" (captura verificada). El trait
+EventHandler de Blitz 0.2.4 no es implementable fuera de la crate porque
+EventState no se exporta: se intercepta handle_ui_event y se hace hit-test con
+set_hover_to + get_hover_node_id, construyendo la cadena con Node::parent.
