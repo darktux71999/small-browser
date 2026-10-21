@@ -102,6 +102,10 @@ impl Tabs {
         self.tabs.iter().find(|t| t.id == id)
     }
 
+    pub fn get_mut(&mut self, id: u64) -> Option<&mut Tab> {
+        self.tabs.iter_mut().find(|t| t.id == id)
+    }
+
     pub fn len(&self) -> usize {
         self.tabs.len()
     }

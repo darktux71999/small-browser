@@ -36,6 +36,7 @@ cargo build
 ./target/debug/browser-lite --png out.png test/data/demo.html
 cargo run --bin blitz-lite -- test/data/js-dom.html   # Blitz + QuickJS
 cargo run --bin blitz-lite -- https://example.com      # carga por HTTP(S)
+cargo run --bin blitz-tabs -- test/data/nav-a.html     # pestañas + historial
 ```
 
 ## Estructura
@@ -61,4 +62,8 @@ Blitz y QuickJS muta el DOM (`getElementById`, `createElement`,
 `addEventListener('click')` con bubbling. 7 tests
 verdes en el motor propio; el puente Blitz se verifica por captura.
 
-Siguiente: eventos (`addEventListener`/click), timers y navegación real.
+Pestañas: `blitz-tabs`. Atajos: Ctrl+T (nueva), Ctrl+W (cerrar),
+Ctrl+Tab / Ctrl+Shift+Tab (ciclar), Alt+Izq/Der (historial). Los enlaces
+navegan y actualizan el historial de la pestaña.
+
+Siguiente: barra de pestañas visible, cookies/storage y sandbox por tab.

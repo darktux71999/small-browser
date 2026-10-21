@@ -78,7 +78,7 @@ DISPLAY=:1 /home/darktux/.cache/bl-target/debug/blitz-lite \
   http://127.0.0.1:8765/test/data/js-dom.html
 ```
 
-### T2 (Agent B) — Timers, keyboard, focus
+### T2 (Agent B) — Timers, keyboard, focus — DONE (verified)
 
 Goal: page scripts get `setTimeout`/`clearTimeout` and keyboard events.
 

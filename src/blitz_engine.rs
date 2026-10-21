@@ -12,6 +12,7 @@ use blitz_dom::{BaseDocument, Document, DocumentConfig};
 use blitz_html::HtmlDocument;
 use blitz_shell::{create_default_event_loop, BlitzApplication, WindowConfig};
 use blitz_traits::events::UiEvent;
+use blitz_traits::navigation::NavigationOptions;
 use markup5ever::{ns, LocalName, QualName};
 
 use crate::sys::{self, JSContext, JSValue, JSValueUnion};
@@ -23,6 +24,7 @@ use crate::sys::{self, JSContext, JSValue, JSValueUnion};
 pub struct JsDocument {
     base: Box<BaseDocument>,
     rt: QjsDom,
+    base_url: Option<String>,
 }
 
 impl Deref for JsDocument {
@@ -44,8 +46,13 @@ impl Document for JsDocument {
             UiEvent::MouseMove(e) => {
                 self.base.set_hover_to(e.x, e.y);
             }
-            UiEvent::MouseDown(_) => {
+            UiEvent::MouseDown(e) => {
+                // Hover first: active_node() is a no-op without a hover node.
+                self.base.set_hover_to(e.x, e.y);
                 self.base.active_node();
+                if let Some(id) = self.base.get_hover_node_id() {
+                    self.base.set_focus_to(id);
+                }
             }
             UiEvent::MouseUp(e) => {
                 // Hit-test at the release position, then bubble "click".
@@ -57,12 +64,41 @@ impl Document for JsDocument {
                     chain.push(id);
                     current = self.base.get_node(id).and_then(|n| n.parent);
                 }
-                for id in chain {
-                    self.rt.dispatch(id, "click");
+                for id in &chain {
+                    self.rt.dispatch(*id, "click");
                 }
+                // Default action for links: our handler bypasses Blitz's
+                // internal click handling, so resolve the href ourselves.
+                self.follow_link(&chain);
                 self.base.shell_provider.request_redraw();
             }
+            UiEvent::KeyDown(e) => {
+                self.dispatch_key("keydown", &e.key.to_string(), &e.code.to_string());
+            }
+            UiEvent::KeyUp(e) => {
+                self.dispatch_key("keyup", &e.key.to_string(), &e.code.to_string());
+            }
             _ => {}
+        }
+    }
+
+    fn poll(&mut self, _task_context: Option<std::task::Context<'_>>) -> bool {
+        // Run due timers; stay alive (return true) while any timer is pending
+        // so a pending timer fires without further input: poll only runs
+        // after a winit event, and true chains redraw -> Poll.
+        match self.rt.run_due_timers() {
+            Ok((ran, pending)) => {
+                if ran > 0 {
+                    self.base.shell_provider.request_redraw();
+                    true
+                } else {
+                    pending > 0
+                }
+            }
+            Err(err) => {
+                eprintln!("browser-lite: js timer error: {err}");
+                false
+            }
         }
     }
 
@@ -71,13 +107,78 @@ impl Document for JsDocument {
     }
 }
 
+impl JsDocument {
+    /// Resolve the first anchor in the chain and hand it to the navigation
+    /// provider (the embedder loads it and swaps the document).
+    fn follow_link(&self, chain: &[usize]) {
+        for id in chain {
+            let Some(node) = self.base.get_node(*id) else { continue };
+            let tag = node
+                .data
+                .downcast_element()
+                .map(|e| e.name.local.to_string())
+                .unwrap_or_default();
+            if tag != "a" {
+                continue;
+            }
+            let Some(href) = node.attr(LocalName::from("href")) else { continue };
+            if let Some(target) = self.resolve_url(href) {
+                self.base.navigation_provider.navigate_to(NavigationOptions::new(
+                    target,
+                    "text/html".to_string(),
+                    self.base.id(),
+                ));
+            }
+            break;
+        }
+    }
+
+    fn resolve_url(&self, href: &str) -> Option<url::Url> {
+        if let Ok(absolute) = url::Url::parse(href) {
+            return Some(absolute);
+        }
+        let base = self.base_url.as_deref()?;
+        url::Url::parse(base).ok()?.join(href).ok()
+    }
+
+    /// Bubble a keyboard event from the focused node to the root.
+    fn dispatch_key(&mut self, event: &str, key: &str, code: &str) {
+        let target = match self.base.get_focussed_node_id() {
+            Some(id) => id,
+            None => return,
+        };
+        let mut chain = Vec::new();
+        let mut current = Some(target);
+        while let Some(id) = current {
+            chain.push(id);
+            current = self.base.get_node(id).and_then(|n| n.parent);
+        }
+        for id in chain {
+            self.rt.dispatch_key(id, event, key, code);
+        }
+        self.base.shell_provider.request_redraw();
+    }
+}
+
 /// Parse HTML, run its inline scripts with QuickJS, and return a renderable
 /// document. Used by both the single-window and tabbed entry points.
 pub fn build_document(html: &str) -> Box<dyn Document> {
+    build_document_with(html, None, None)
+}
+
+/// Build a document with a base URL (for relative links) and an optional
+/// navigation provider (link clicks enqueue requests instead of doing nothing).
+pub fn build_document_with(
+    html: &str,
+    base_url: Option<String>,
+    navigation_provider: Option<std::sync::Arc<dyn blitz_traits::navigation::NavigationProvider>>,
+) -> Box<dyn Document> {
     // `ua_stylesheets: Some(..)` makes blitz-html append its DEFAULT_CSS
     // (display:block defaults etc.). Without it every box collapses.
     let config = DocumentConfig {
         ua_stylesheets: Some(Vec::new()),
+        base_url: base_url.clone(),
+        navigation_provider,
         ..Default::default()
     };
     let parsed = HtmlDocument::from_html(html, config);
@@ -92,7 +193,11 @@ pub fn build_document(html: &str) -> Box<dyn Document> {
         }
     }
 
-    Box::new(JsDocument { base, rt })
+    Box::new(JsDocument {
+        base,
+        rt,
+        base_url,
+    })
 }
 
 /// Show one document.
@@ -150,18 +255,51 @@ const BOOTSTRAP: &str = r#"
     const idx = list.indexOf(fn);
     if (idx >= 0) list.splice(idx, 1);
   };
-  globalThis.__dispatch = function (id, type) {
+  globalThis.__dispatch = function (id, type, key, code) {
     const byType = __listeners.get(id);
     if (!byType) return 0;
     const list = byType.get(type);
     if (!list || !list.length) return 0;
     const self = new Element(id);
-    const event = { type: type, target: self, defaultPrevented: false,
+    const event = { type: type, target: self, key: key, code: code,
+                    defaultPrevented: false,
                     preventDefault() { this.defaultPrevented = true; },
                     stopPropagation() {} };
     for (const fn of list.slice()) fn.call(self, event);
     return 1;
   };
+
+  const __timers = new Map();
+  let __nextTimerId = 1;
+  globalThis.setTimeout = function (fn, delay, ...args) {
+    const ms = Number(delay) || 0;
+    const due = Date.now() + Math.max(0, ms);
+    const id = __nextTimerId++;
+    __timers.set(id, { fn: fn, due: due, args: args });
+    return id;
+  };
+  globalThis.clearTimeout = function (id) { __timers.delete(Number(id)); };
+  globalThis.__run_due_timers = function (now) {
+    const due = [];
+    for (const entry of __timers) {
+      if (entry[1].due <= now) due.push(entry);
+    }
+    due.sort((a, b) => (a[1].due - b[1].due) || (a[0] - b[0]));
+    let ran = 0;
+    for (const entry of due) {
+      const id = entry[0];
+      const t = entry[1];
+      if (!__timers.has(id)) continue;
+      __timers.delete(id);
+      try {
+        if (typeof t.fn === "function") t.fn(...t.args);
+        else eval(t.fn);
+      } catch (e) { console.log("timer error", e); }
+      ran++;
+    }
+    return ran;
+  };
+  globalThis.__pending_timers = function () { return __timers.size; };
 
   Element.prototype.addEventListener = function (type, fn) {
     __add_listener(this.__id, String(type), fn);
@@ -172,6 +310,7 @@ const BOOTSTRAP: &str = r#"
 
   const document = {
     get body() { const id = __dom_body(); return id < 0 ? null : new Element(id); },
+    get activeElement() { const id = __dom_active(); return id < 0 ? null : new Element(id); },
     getElementById(id) { const n = __dom_get_id(String(id)); return n < 0 ? null : new Element(n); },
     createElement(tag) { return new Element(__dom_create(String(tag))); },
     querySelector(sel) { const n = __dom_query(String(sel)); return n < 0 ? null : new Element(n); },
@@ -201,6 +340,7 @@ impl QjsDom {
             install(ctx, global, c"__dom_attr", dom_attr, 2);
             install(ctx, global, c"__dom_tag", dom_tag, 1);
             install(ctx, global, c"__dom_query", dom_query, 1);
+            install(ctx, global, c"__dom_active", dom_active, 0);
 
             let console = sys::JS_NewObject(ctx);
             install(ctx, console, c"log", console_log, 1);
@@ -244,6 +384,57 @@ impl QjsDom {
         if let Err(err) = self.eval(&source, "dispatch.js") {
             eprintln!("browser-lite: js dispatch error: {err}");
         }
+    }
+
+    /// Call the JS listener registry for one node with key/code (keyboard).
+    /// Key strings travel through JS globals to avoid source escaping.
+    fn dispatch_key(&self, id: usize, event: &str, key: &str, code: &str) {
+        unsafe {
+            let global = sys::JS_GetGlobalObject(self.ctx);
+            let k = sys::JS_NewStringLen(self.ctx, key.as_ptr() as *const c_char, key.len());
+            sys::JS_SetPropertyStr(self.ctx, global, c"__key_arg".as_ptr(), k);
+            let c = sys::JS_NewStringLen(self.ctx, code.as_ptr() as *const c_char, code.len());
+            sys::JS_SetPropertyStr(self.ctx, global, c"__code_arg".as_ptr(), c);
+            sys::JS_FreeValue(self.ctx, global);
+        }
+        let source = format!("__dispatch({id}, \"{event}\", globalThis.__key_arg, globalThis.__code_arg)");
+        if let Err(err) = self.eval(&source, "dispatch.js") {
+            eprintln!("browser-lite: js dispatch error: {err}");
+        }
+    }
+
+    /// Evaluate JS and read an i64 result (used by the timer tick).
+    fn eval_i64(&self, source: &str) -> Result<i64, String> {
+        unsafe {
+            let code = std::ffi::CString::new(source)
+                .map_err(|_| "JS source contains NUL".to_string())?;
+            let name = std::ffi::CString::new("tick.js").unwrap_or_default();
+            let value = sys::JS_Eval(
+                self.ctx,
+                code.as_ptr(),
+                code.as_bytes().len(),
+                name.as_ptr(),
+                sys::JS_EVAL_TYPE_GLOBAL,
+            );
+            let result = if sys::js_is_exception(value) {
+                Err(self.take_exception())
+            } else {
+                let mut out: i64 = 0;
+                sys::JS_ToInt64(self.ctx, &mut out, value);
+                Ok(out)
+            };
+            sys::JS_FreeValue(self.ctx, value);
+            let mut ctx: *mut JSContext = std::ptr::null_mut();
+            while sys::JS_ExecutePendingJob(self.rt, &mut ctx) > 0 {}
+            result
+        }
+    }
+
+    /// Run due timers; returns (ran, pending).
+    fn run_due_timers(&self) -> Result<(i64, i64), String> {
+        let ran = self.eval_i64("globalThis.__run_due_timers ? globalThis.__run_due_timers(Date.now()) : 0")?;
+        let pending = self.eval_i64("globalThis.__pending_timers ? globalThis.__pending_timers() : 0")?;
+        Ok((ran, pending))
     }
 
     fn take_exception(&self) -> String {        unsafe {
@@ -329,6 +520,11 @@ unsafe extern "C" fn dom_query(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv
     let selector = arg_string(ctx, argv, 0);
     let found = doc(ctx).query_selector(&selector).ok().flatten();
     js_int(found.map(|n| n as i64).unwrap_or(-1))
+}
+
+unsafe extern "C" fn dom_active(ctx: *mut JSContext, _t: JSValue, _c: c_int, _a: *mut JSValue) -> JSValue {
+    let focused = doc(ctx).get_focussed_node_id();
+    js_int(focused.map(|n| n as i64).unwrap_or(-1))
 }
 
 unsafe extern "C" fn dom_create(ctx: *mut JSContext, _t: JSValue, _c: c_int, argv: *mut JSValue) -> JSValue {

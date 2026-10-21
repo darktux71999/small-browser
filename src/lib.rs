@@ -6,6 +6,7 @@ pub mod dom;
 pub mod history;
 pub mod js;
 pub mod layout;
+pub mod nav;
 pub mod net;
 pub mod paint;
 pub mod shell;

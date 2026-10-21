@@ -13,3 +13,9 @@ pub fn resolve(base: &str, href: &str) -> Option<String> {
     let joined = base.join(href).ok()?;
     matches!(joined.scheme(), "http" | "https").then(|| joined.to_string())
 }
+
+/// Convert a local path into a file:// URL, for resolving relative links.
+pub fn file_url(path: &str) -> Option<String> {
+    let abs = std::fs::canonicalize(path).ok()?;
+    url::Url::from_file_path(abs).ok().map(|u| u.to_string())
+}

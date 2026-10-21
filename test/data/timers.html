@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #f6f7f9; color: #222; padding: 24px; }
+    p { margin-top: 20px; font-size: 20px; }
+    input { font-size: 20px; padding: 12px 16px; border-radius: 8px; border: 1px solid #999; }
+  </style>
+</head>
+<body>
+  <input id="k" value="click here then type">
+  <p id="out">waiting</p>
+  <p id="keyout">nokey</p>
+  <p id="focusout">nofocus</p>
+  <script>
+    setTimeout(() => document.getElementById("out").textContent = "later", 300);
+    document.getElementById("k").addEventListener("keydown", function (ev) {
+      document.getElementById("keyout").textContent = "key:" + ev.key + ":" + ev.code;
+    });
+    document.getElementById("k").addEventListener("click", function () {
+      var a = document.activeElement;
+      document.getElementById("focusout").textContent = a ? ("focus:" + a.tagName) : "nofocus";
+    });
+  </script>
+</body>
+</html>
