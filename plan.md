@@ -253,3 +253,39 @@ path works.
 
 This also means visual artifacts on this GPU are not trustworthy evidence;
 verify rendering with the CPU backend.
+
+## Wave 1.5 — assigned in parallel
+
+### T11 (Agent B) — Cookie jar and persistence
+
+Goal: real cookies for HTTP, stored through the existing SQLite `Store`.
+
+Owns: `src/cookies.rs` (new), `src/net.rs`, `src/storage.rs`,
+`tests/cookies.rs` (new), `test/data/cookie-*.html`.
+
+Do not touch: `src/blitz_engine.rs`, `src/bin/blitz-tabs.rs`,
+`src/bin/blitz-lite.rs`, `Cargo.toml`.
+
+Scope:
+
+- `CookieJar` with `set_from_header(url, set_cookie_value)`,
+  `header_for(url) -> Option<String>` and `store/load` via `Store`.
+- Simplified matching: host-only and domain cookies, path prefix, `Secure`,
+  `HttpOnly` ignored for now, expiry by absolute timestamp
+  (`SystemTime`; no new deps).
+- `net::fetch_with_cookies(url, &CookieJar)` sends `Cookie` and captures every
+  `Set-Cookie` header from the response (including redirects).
+- Tests with the in-test HTTP server: set, echo, domain scope, path scope,
+  expiry, persistence across `Store::open`.
+
+Acceptance: `cargo test --test cookies` green; existing net/store tests stay
+green. No UI integration yet.
+
+### T8 (Agent A / me) — Subresources
+
+Owns: `Cargo.toml` (`blitz-net`), `src/blitz_engine.rs`,
+`src/bin/blitz-lite.rs`, `src/bin/blitz-tabs.rs`.
+
+Wire `blitz_net::Provider` and the tokio runtime so `<link rel=stylesheet>`,
+images and fonts load; pass the provider through `DocumentConfig` and let
+`BlitzApplication` handle `ResourceLoad`. Then retest codeberg.org.
