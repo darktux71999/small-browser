@@ -49,7 +49,7 @@ DISPLAY=:1/           # X display for visual checks
 | --- | --- | --- |
 | Networking v2 | `src/net.rs`, `src/url.rs`, `src/bin/blitz-lite.rs`, `test/data/net-*.html` | Agent A |
 | Storage | `src/storage.rs` (new), `tests/storage.rs` (new), `Cargo.toml` | Agent B |
-| Paint/window polish | `src/blitz_engine.rs`, `src/bin/blitz-tabs.rs`, `test/data/*.html` | Agent C |
+| Paint/window polish — done | `src/blitz_engine.rs`, `src/bin/blitz-tabs.rs`, `test/data/*.html` | Agent C |
 | Tab strip design | `docs/tab-strip.md` (new), `src/bin/tab-strip-spike.rs` (new) | Agent D |
 | Frozen | `src/dom.rs`, `src/css.rs`, `src/layout.rs`, `src/paint.rs`, `src/shell.rs`, `src/history.rs`, `src/tabs.rs`, `src/nav.rs` | nobody |
 

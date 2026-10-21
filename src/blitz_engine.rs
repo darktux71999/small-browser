@@ -181,10 +181,16 @@ pub fn build_document_with(
         navigation_provider,
         ..Default::default()
     };
-    let parsed = HtmlDocument::from_html(html, config);
+    // Blitz does not propagate the body background to the canvas, so the
+    // window shows the desktop below the content. A fixed, behind-everything
+    // div painted with the body colour fills the viewport.
+    let color = canvas_background(html);
+    let html = inject_canvas(html, &color);
+
+    let parsed = HtmlDocument::from_html(&html, config);
     let mut base = Box::new(BaseDocument::from(parsed));
 
-    let scripts = extract_inline_scripts(html);
+    let scripts = extract_inline_scripts(&html);
     let doc_ptr: *mut BaseDocument = &mut *base;
     let rt = QjsDom::new(doc_ptr);
     for (i, script) in scripts.iter().enumerate() {
@@ -607,6 +613,103 @@ unsafe extern "C" fn console_log(ctx: *mut JSContext, _t: JSValue, argc: c_int, 
 
 fn string_value(ctx: *mut JSContext, s: &str) -> JSValue {
     unsafe { sys::JS_NewStringLen(ctx, s.as_ptr() as *const c_char, s.len()) }
+}
+
+/// Best-effort body background: inline style, then `<style>` rules whose
+/// selector is exactly `body` (later rules win). Defaults to white.
+fn canvas_background(html: &str) -> String {
+    let mut color = "#ffffff".to_string();
+
+    if let Some(tag_start) = find_ci(html, "<body") {
+        if let Some(tag_end_rel) = html[tag_start..].find('>') {
+            let tag = &html[tag_start..tag_start + tag_end_rel];
+            if let Some(style) = attr_value(tag, "style") {
+                if let Some(value) = background_decl(&style) {
+                    color = value;
+                }
+            }
+        }
+    }
+
+    let mut cursor = 0;
+    while let Some(open_rel) = find_ci(&html[cursor..], "<style") {
+        let open = cursor + open_rel;
+        let Some(body_start_rel) = html[open..].find('>') else { break };
+        let body_start = open + body_start_rel + 1;
+        let Some(close_rel) = find_ci(&html[body_start..], "</style") else { break };
+        let css = &html[body_start..body_start + close_rel];
+        let mut rest = css;
+        while let Some(brace) = rest.find('{') {
+            let selector = rest[..brace].trim();
+            let Some(close) = rest[brace..].find('}') else { break };
+            let decls = &rest[brace + 1..brace + close];
+            let is_body = selector
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("body"));
+            if is_body {
+                if let Some(value) = background_decl(decls) {
+                    color = value;
+                }
+            }
+            rest = &rest[brace + close + 1..];
+        }
+        cursor = body_start + close_rel + "</style".len();
+    }
+    color
+}
+
+fn background_decl(decls: &str) -> Option<String> {
+    let mut found = None;
+    for decl in decls.split(';') {
+        let Some((prop, value)) = decl.split_once(':') else { continue };
+        let prop = prop.trim().to_ascii_lowercase();
+        if prop == "background" || prop == "background-color" {
+            let value = value.trim();
+            if !value.is_empty() && !value.contains("url(") {
+                found = Some(value.to_string());
+            }
+        }
+    }
+    found
+}
+
+fn attr_value<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let lower = tag.to_ascii_lowercase();
+    let idx = lower.find(&format!("{name}="))?;
+    let after = &tag[idx + name.len() + 1..];
+    let quote = after.chars().next()?;
+    if quote == '"' || quote == '\'' {
+        let rest = &after[1..];
+        let end = rest.find(quote)?;
+        Some(&rest[..end])
+    } else {
+        let end = after.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(after.len());
+        Some(&after[..end])
+    }
+}
+
+fn inject_canvas(html: &str, color: &str) -> String {
+    let Some(start) = find_ci(html, "<body") else {
+        return html.to_string();
+    };
+    let Some(end_rel) = html[start..].find('>') else {
+        return html.to_string();
+    };
+    let insert_at = start + end_rel + 1;
+    let layer = format!(
+        "<div style=\"position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:-1;background:{color}\"></div>"
+    );
+    let mut out = String::with_capacity(html.len() + layer.len());
+    out.push_str(&html[..insert_at]);
+    out.push_str(&layer);
+    out.push_str(&html[insert_at..]);
+    out
+}
+
+fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .to_ascii_lowercase()
+        .find(&needle.to_ascii_lowercase())
 }
 
 /// MVP script extraction: inline `<script>` bodies, no `src` yet.
