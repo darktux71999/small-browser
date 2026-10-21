@@ -50,6 +50,17 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
   aplican. El jar persiste y se recupera a través del `Store` de SQLite, y
   `net::fetch_with_cookies` envía la cabecera `Cookie` y captura cada
   `Set-Cookie` de la respuesta, incluidas las de una cadena de redirecciones.
+- S14: el renderer se puede sandboxear en dos capas independientes: un
+  filtro seccomp que decide qué syscalls puede pedir el proceso, y un
+  envoltorio bubblewrap que lo ejecuta en namespaces privados con el
+  sistema de archivos en sólo lectura y sin red. El filtro se instala con
+  `no_new_privs` y `tsync` y es irreversible, así que se prueba en un
+  proceso hijo. El diseño completo está en `docs/sandbox.md`.
+- S15: un probe de fidelidad compara, con capturas, lo que dibuja el motor
+  con lo que dibuja un navegador de referencia (Firefox headless) sobre un
+  corpus de fixtures de SVG y de fuentes. Mide la cantidad de tinta de cada
+  render y su diferencia, y produce comparativas lado a lado. El informe
+  vive en `docs/font-svg-fidelity.md`.
 
 ## Tasks
 
@@ -64,6 +75,8 @@ descarta por el coste de cgo en el camino caliente DOM/JS).
 - T9 [S11] inline — storage SQLite (Store + tests) — DONE
 - T10 [S12] inline — networking v2 (charset, status, URL final, async) — DONE
 - T11 [S13] inline — cookie jar + persistencia (CookieJar, Store) — DONE
+- T12 [S14] inline — sandbox: filtro seccomp + aislamiento bubblewrap — DONE
+- T13 [S15] inline — probe de fidelidad SVG/fuentes (corpus + informe) — DONE
 
 ## Log
 
@@ -175,3 +188,54 @@ Evidencia: RED observado (E0432 por `browser_lite::cookies`) y GREEN con
 ruta, caducidad, persistencia tras reabrir el `Store`, y captura de
 `Set-Cookie` en una redirección). Pendiente: integración con la UI (eso es
 T8); `document.cookie` aún no existe en la API del DOM.
+
+L12 (T10 sandbox, plan.md wave 2): `src/sandbox.rs` nuevo con FFI fino a
+libseccomp 2.6.1 del sistema (sin dependencia Rust nueva) y dos capas
+independientes. Capa L1, filtro seccomp: `Policy::DenyDangerous` (por
+defecto se permite todo salvo la lista `DANGEROUS_SYSCALLS`: execve,
+ptrace, mount, setns, bpf, init_module, keyctl, userfaultfd, io_uring,
+personality, setuid...) y `Policy::AllowOnlyRenderer` (sólo la lista
+`RENDERER_SYSCALLS`, todo lo demás EPERM). El filtro se carga con
+`no_new_privs` y `tsync`, y es irreversible: por eso los tests lo ejecutan
+en un proceso hijo (el binario de test se re-ejecuta a sí mismo con
+`BLITZ_SANDBOX_PROBE=install`). Capa L2, bubblewrap: `isolated_command` /
+`spawn_isolated` arrancan el renderer con `--ro-bind / /`, `--tmpfs /tmp`,
+`--unshare-all` (pid, ipc, uts, cgroup y **red**), `--die-with-parent` y
+`--new-session`. `docs/sandbox.md` tiene el modelo de amenazas, la
+comparación seccomp/Landlock/bubblewrap, las fases L1/L2/L3 (el navegador se
+queda con la red, el protocolo de IPC y la política) y lo que falta.
+Evidencia: RED no aplica (tarea nueva con tests nuevos), GREEN con
+`cargo test --test sandbox` 8/8. Medido: el filtro deja el proceso en
+`Seccomp: 2` y `execve` falla (no puede lanzar `/bin/true`); el hijo
+sandboxed arranca, imprime y sale limpio; dentro del sandbox no hay ninguna
+ruta (`/proc/net/route` sólo con la cabecera) ni interfaces del host.
+Pendiente: el renderer sigue en el proceso del navegador, así que el filtro
+aún no se aplica a nada: el cableado necesita `src/bin/blitz-tabs.rs` y un
+proceso propio para el renderer (fase L2 del diseño). La lista
+`RENDERER_SYSCALLS` todavía no se ha validado contra una carga real de
+página (hace falta un `strace`).
+
+L13 (T12 probe de fidelidad, plan.md): corpus de 12 fixtures en
+`test/data/probe-*.html` (5 de SVG, 7 de fuentes) más `tools/fidelity-probe.py`
+y `tools/x11shot.py`, y el informe en `docs/font-svg-fidelity.md`. El probe
+abre cada fixture en `blitz-lite`, captura **la ventana** (no el escritorio)
+con `import -window <id>` — este entorno no tiene `xdotool` ni `xwininfo`, así
+que el árbol de ventanas se recorre con Xlib por ctypes — y renderiza lo
+mismo con Firefox headless; compara dentro de la caja de contenido de la
+referencia, con "tinta" (pixeles no de fondo) y diferencia con 25% de fuzz.
+Hallazgos: **el SVG no se dibuja en absoluto** (5/5: formas, path, gradientes,
+`<text>`, y como `<img>`/background queda una caja vacía); `line-height` se
+ignora (1, 1.5 y 2 dan el mismo espacio, y el interlineado por defecto es
+mayor que el de Firefox, así que el ritmo vertical difiere); también se
+ignoran `text-indent`, `text-align: justify`, `text-transform` y
+`font-variant-ligatures: none`; y el `@font-face` con `url(file://...)` no se
+aplica (la línea cae a la familia por defecto, mientras Firefox sí usa el
+archivo). Lo que **sí** coincide: tamaño de fuente (px/em/rem/%/palabras
+clave), peso (300-900 eligen las mismas caras), cursiva, `letter-spacing`,
+`word-spacing`, `text-align` izquierda/centro/derecha, el fallback a glifo
+ausente (tofu igual que Firefox) y las ligaduras OpenType del Nerd Font.
+Límite del entorno: sólo hay una familia instalada (JetBrains Mono), así que
+la selección de familias no se puede comparar; por eso el fixture de
+`@font-face` usa un *archivo* distinto (ExtraBold) para que la diferencia
+se vea. Nota: las primeras capturas mostraban el escritorio bajo la página;
+era un build anterior al arreglo del fondo de T6, ya no se reproduce.

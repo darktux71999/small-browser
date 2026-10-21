@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <title>probe svg gradient</title>
+  <style>
+    body { margin: 0; background: #ffffff; font-family: sans-serif; }
+    h1 { font-size: 20px; margin: 8px; }
+  </style>
+</head>
+<body>
+  <h1>inline svg: gradients</h1>
+  <svg width="480" height="240" viewBox="0 0 480 240" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="lin" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#22b66b" />
+        <stop offset="1" stop-color="#22b6db" />
+      </linearGradient>
+      <radialGradient id="rad" cx="0.5" cy="0.5" r="0.6">
+        <stop offset="0" stop-color="#ffff00" />
+        <stop offset="1" stop-color="#aa3300" />
+      </radialGradient>
+    </defs>
+    <rect x="10" y="10" width="220" height="220" fill="url(#lin)" />
+    <circle cx="350" cy="120" r="100" fill="url(#rad)" />
+  </svg>
+</body>
+</html>

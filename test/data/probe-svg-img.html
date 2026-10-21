@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+  <title>probe svg external image</title>
+  <style>
+    body { margin: 0; background: #ffffff; font-family: sans-serif; }
+    h1 { font-size: 20px; margin: 8px; }
+    .box { display: inline-block; width: 240px; height: 120px; margin: 8px;
+            border: 1px solid #cccccc; }
+  </style>
+</head>
+<body>
+  <h1>svg as an image, and as a css background</h1>
+  <div class="box">
+    <img src="probe-svg-image.svg" width="240" height="120" alt="external svg" />
+  </div>
+  <div class="box" style="background-image: url(probe-svg-image.svg);"></div>
+</body>
+</html>

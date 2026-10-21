@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <title>probe svg text</title>
+  <style>
+    body { margin: 0; background: #ffffff; font-family: sans-serif; }
+    h1 { font-size: 20px; margin: 8px; }
+  </style>
+</head>
+<body>
+  <h1>inline svg: text and transform</h1>
+  <svg width="480" height="240" viewBox="0 0 480 240" xmlns="http://www.w3.org/2000/svg">
+    <text x="20" y="60" font-family="sans-serif" font-size="36" fill="#222222">Hello</text>
+    <text x="20" y="110" font-family="monospace" font-size="28" fill="#aa3300">mono 28</text>
+    <text x="240" y="160" font-family="serif" font-size="24" fill="#0066cc"
+          text-anchor="middle">centred</text>
+    <g transform="translate(300 170) rotate(-15)">
+      <rect x="0" y="0" width="120" height="40" fill="#333333" />
+      <text x="60" y="28" font-family="sans-serif" font-size="20" fill="#ffffff"
+            text-anchor="middle">rotated</text>
+    </g>
+  </svg>
+</body>
+</html>

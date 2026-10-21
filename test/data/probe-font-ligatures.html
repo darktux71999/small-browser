@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+  <title>probe font ligatures</title>
+  <style>
+    /* The Nerd Font build of JetBrains Mono carries programming ligatures
+       (=> becomes =>), so this fixture tells whether the text is shaped
+       with the font's OpenType features or drawn glyph by glyph. */
+    body { margin: 0; padding: 8px; background: #ffffff; }
+    h1 { font-size: 18px; margin: 4px 0 8px; }
+    p { margin: 4px 0; font-size: 28px; font-family: "JetBrainsMono NFM", monospace; }
+    .liga { font-variant-ligatures: common-ligatures; }
+    .noLiga { font-variant-ligatures: none; }
+    .feat { font-feature-settings: "liga" 1, "calt" 1; }
+  </style>
+</head>
+<body>
+  <h1>ligatures and font features</h1>
+  <p class="liga">ligatures: =&gt; != &gt;= &lt;= === |&gt; &lt;-</p>
+  <p class="noLiga">no ligatures: =&gt; != &gt;= &lt;= === |&gt; &lt;-</p>
+  <p class="feat">features liga+calt: =&gt; != &gt;= &lt;= === |&gt; &lt;-</p>
+</body>
+</html>

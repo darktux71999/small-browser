@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <title>probe font stack</title>
+  <style>
+    body { margin: 0; padding: 8px; background: #ffffff; font-family: sans-serif; }
+    h1 { font-size: 18px; margin: 4px 0 8px; }
+    p { margin: 4px 0; font-size: 20px; }
+    .named { font-family: "JetBrains Mono"; }
+    .sans { font-family: sans-serif; }
+    .serif { font-family: serif; }
+    .mono { font-family: monospace; }
+    .missing { font-family: "NoSuchFontXYZ"; }
+    .fallback { font-family: "NoSuchFontXYZ", "JetBrains Mono", monospace; }
+  </style>
+</head>
+<body>
+  <h1>font-family stacks</h1>
+  <p class="named">named: JetBrains Mono</p>
+  <p class="sans">generic: sans-serif</p>
+  <p class="serif">generic: serif</p>
+  <p class="mono">generic: monospace</p>
+  <p class="missing">missing family: NoSuchFontXYZ</p>
+  <p class="fallback">missing then fallback: NoSuchFontXYZ, JetBrains Mono</p>
+</body>
+</html>

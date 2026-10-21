@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+  <title>probe font webfont</title>
+  <style>
+    /* The system only ships JetBrains Mono, so the web font points at a
+       *different file* of the same family: the extra bold face is visibly
+       different from the regular one, so a working @font-face shows up.
+       What is being probed is the @font-face machinery, not the typeface. */
+    @font-face {
+      font-family: "Probe Local";
+      src: local("JetBrains Mono");
+    }
+    @font-face {
+      font-family: "Probe File";
+      src: url("file:///usr/share/fonts/TTF/JetBrainsMono-ExtraBold.ttf");
+    }
+    body { margin: 0; padding: 8px; background: #ffffff; }
+    h1 { font-size: 18px; margin: 4px 0 8px; }
+    p { margin: 4px 0; font-size: 24px; }
+    .default { font-family: "JetBrains Mono"; }
+    .local { font-family: "Probe Local"; }
+    .file { font-family: "Probe File"; }
+  </style>
+</head>
+<body>
+  <h1>@font-face: local() and a file url</h1>
+  <p class="default">default family: the quick brown fox</p>
+  <p class="local">@font-face local(): the quick brown fox</p>
+  <p class="file">@font-face file url: the quick brown fox</p>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+  <title>probe svg path</title>
+  <style>
+    body { margin: 0; background: #ffffff; font-family: sans-serif; }
+    h1 { font-size: 20px; margin: 8px; }
+  </style>
+</head>
+<body>
+  <h1>inline svg: path, fill and stroke</h1>
+  <svg width="480" height="240" viewBox="0 0 480 240" xmlns="http://www.w3.org/2000/svg">
+    <path d="M 20 200 L 120 40 L 220 200 Z" fill="#c33" stroke="#600" stroke-width="4"
+          stroke-linejoin="round" />
+    <path d="M 260 60 q 40 80 80 0 t 80 0" fill="none" stroke="#06c" stroke-width="8"
+          stroke-linecap="round" />
+    <path d="M 260 160 h 180" stroke="#333" stroke-width="3" stroke-dasharray="12 8" />
+  </svg>
+</body>
+</html>
