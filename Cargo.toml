@@ -1,0 +1,12 @@
+[package]
+name = "browser-lite"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cairo-rs = { version = "0.22", features = ["png"] }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

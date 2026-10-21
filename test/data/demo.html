@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <title>demo lite</title>
+  <style>
+    body { background: #f4f4f4; COLOR: #222; font-size: 18px; }
+    h1 { color: #0a5; }
+    .card { background: white; padding: 12px; margin: 10px 0; }
+    #lead { color: red !important; }
+    p { color: black; }
+  </style>
+</head>
+<body>
+  <h1>Browser Lite</h1>
+  <p id="lead">Hello from lexbor + quickjs.</p>
+  <div class="card">
+    <p>This box has padding and a background.</p>
+    <span>inline text</span> and <b>bold</b> text.
+  </div>
+  <p class="x">A block clicked with specificity.</p>
+  <script>
+    console.log("js ok", 1 + 1);
+    document.title = "demo lite (js)";
+  </script>
+  <script>syntax error here</script>
+</body>
+</html>
