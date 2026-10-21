@@ -159,6 +159,9 @@ impl TabbedApp {
         if let Some(view) = self.app.windows.get_mut(&window_id) {
             view.doc = doc;
             view.doc.set_viewport(viewport);
+            if let Some(title) = view.doc.find_title_node().map(|node| node.text_content()) {
+                view.window.set_title(&title);
+            }
             view.request_redraw();
         }
         self.by_doc.remove(&old_doc_id);
