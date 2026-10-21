@@ -33,7 +33,15 @@ fn main() -> ExitCode {
         }
     };
 
-    match browser_lite::blitz_engine::run(&html) {
+    // Pass the source URL so relative subresources resolve; without it Blitz
+    // falls back to a data: base and panics on the first stylesheet link.
+    let base = if url::is_http(&target) {
+        Some(target.clone())
+    } else {
+        url::file_url(&target)
+    };
+    let doc = browser_lite::blitz_engine::build_document_with(&html, base, None);
+    match browser_lite::blitz_engine::run_documents(vec![doc]) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("blitz-lite: {err}");
