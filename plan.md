@@ -35,6 +35,7 @@ CARGO_TARGET_DIR=/home/darktux/.cache/bl-target cargo test --test smoke
 | --- | --- | --- |
 | Network + navigation | `src/net.rs`, `src/url.rs`, `src/bin/blitz-lite.rs`, `src/lib.rs`, `Cargo.toml` | Agent A |
 | Engine core (timers, keyboard, focus) | `src/blitz_engine.rs`, `src/sys.rs` | Agent B |
+| Tabs + history (landed) | `src/history.rs`, `src/tabs.rs`, `src/bin/blitz-tabs.rs` | Agent A |
 | Legacy engine | `src/dom.rs`, `src/css.rs`, `src/layout.rs`, `src/paint.rs`, `src/shell.rs` | frozen |
 | Tests/fixtures | `tests/`, `test/data/` | whoever needs a fixture, one new file per task |
 | This plan | `plan.md` | Agent A |

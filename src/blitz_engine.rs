@@ -71,8 +71,9 @@ impl Document for JsDocument {
     }
 }
 
-/// Parse HTML with Blitz, run its inline scripts with QuickJS, then show it.
-pub fn run(html: &str) -> Result<(), String> {
+/// Parse HTML, run its inline scripts with QuickJS, and return a renderable
+/// document. Used by both the single-window and tabbed entry points.
+pub fn build_document(html: &str) -> Box<dyn Document> {
     // `ua_stylesheets: Some(..)` makes blitz-html append its DEFAULT_CSS
     // (display:block defaults etc.). Without it every box collapses.
     let config = DocumentConfig {
@@ -91,14 +92,22 @@ pub fn run(html: &str) -> Result<(), String> {
         }
     }
 
-    let doc = JsDocument { base, rt };
+    Box::new(JsDocument { base, rt })
+}
 
+/// Show one document.
+pub fn run(html: &str) -> Result<(), String> {
+    run_documents(vec![build_document(html)])
+}
+
+/// Show one window per document (each window is a tab in the current MVP).
+pub fn run_documents(docs: Vec<Box<dyn Document>>) -> Result<(), String> {
     let event_loop = create_default_event_loop();
-    let renderer = anyrender_vello::VelloWindowRenderer::new();
-    let window = WindowConfig::new(Box::new(doc), renderer);
-
     let mut application = BlitzApplication::new(event_loop.create_proxy());
-    application.add_window(window);
+    for doc in docs {
+        let renderer = anyrender_vello::VelloWindowRenderer::new();
+        application.add_window(WindowConfig::new(doc, renderer));
+    }
     event_loop
         .run_app(&mut application)
         .map_err(|e| format!("event loop: {e}"))
