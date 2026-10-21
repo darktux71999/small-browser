@@ -264,6 +264,20 @@ impl ApplicationHandler<BlitzShellEvent> for TabbedApp {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        if let WindowEvent::MouseWheel { delta, .. } = &event {
+            let (x, y) = match delta {
+                winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                    (*x as f64 * 20.0, *y as f64 * 20.0)
+                }
+                winit::event::MouseScrollDelta::PixelDelta(offsets) => (offsets.x, offsets.y),
+            };
+            if let Some(view) = self.app.windows.get_mut(&window_id) {
+                if blitz_engine::scroll_document(&mut view.doc, x, y) {
+                    view.request_redraw();
+                }
+            }
+            return;
+        }
         if let WindowEvent::ModifiersChanged(modifiers) = &event {
             self.mods = modifiers.state();
             return;

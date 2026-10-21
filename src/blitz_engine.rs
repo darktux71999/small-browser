@@ -12,11 +12,17 @@ use std::os::raw::{c_char, c_int, c_void};
 use blitz_dom::net::Resource;
 use blitz_dom::{BaseDocument, Document, DocumentConfig};
 use blitz_html::HtmlDocument;
-use blitz_shell::{create_default_event_loop, BlitzApplication, BlitzShellNetCallback, WindowConfig};
+use blitz_shell::{
+    create_default_event_loop, BlitzApplication, BlitzShellEvent, BlitzShellNetCallback, WindowConfig,
+};
 use blitz_traits::events::UiEvent;
 use blitz_traits::navigation::NavigationOptions;
 use blitz_traits::net::NetProvider;
 use markup5ever::{ns, LocalName, QualName};
+use winit::application::ApplicationHandler;
+use winit::event::{MouseScrollDelta, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
+use winit::window::WindowId;
 
 use crate::sys::{self, JSContext, JSValue, JSValueUnion};
 
@@ -225,6 +231,61 @@ pub fn run(html: &str) -> Result<(), String> {
     run_documents(vec![build_document(html)])
 }
 
+/// Wheel deltas are in lines; Blitz multiplies them by this factor.
+fn wheel_delta(delta: &MouseScrollDelta) -> (f64, f64) {
+    match delta {
+        MouseScrollDelta::LineDelta(x, y) => (*x as f64 * 20.0, *y as f64 * 20.0),
+        MouseScrollDelta::PixelDelta(offsets) => (offsets.x, offsets.y),
+    }
+}
+
+/// Scroll the nearest scrollable container under the hovered node, falling
+/// back to the viewport when that node is not inside one.
+pub fn scroll_document(doc: &mut Box<dyn Document>, x: f64, y: f64) -> bool {
+    let Some(hover) = doc.get_hover_node_id() else {
+        return doc.scroll_viewport_by_has_changed(x, y);
+    };
+    doc.scroll_node_by_has_changed(hover, x, y) || doc.scroll_viewport_by_has_changed(x, y)
+}
+
+/// `BlitzApplication` that scrolls the viewport on wheel events (Blitz only
+/// tries the hovered node and never falls back).
+struct WheelApp {
+    inner: BlitzApplication<anyrender_vello_cpu::VelloCpuWindowRenderer>,
+}
+
+impl ApplicationHandler<BlitzShellEvent> for WheelApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.inner.resumed(event_loop);
+    }
+
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        self.inner.suspended(event_loop);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        if let WindowEvent::MouseWheel { delta, .. } = &event {
+            let (x, y) = wheel_delta(delta);
+            if let Some(view) = self.inner.windows.get_mut(&window_id) {
+                if scroll_document(&mut view.doc, x, y) {
+                    view.request_redraw();
+                }
+            }
+            return;
+        }
+        self.inner.window_event(event_loop, window_id, event);
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: BlitzShellEvent) {
+        self.inner.user_event(event_loop, event);
+    }
+}
+
 /// Show one HTML document with subresource loading enabled.
 pub fn run_html(html: &str, base_url: Option<String>) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -239,8 +300,10 @@ pub fn run_html(html: &str, base_url: Option<String>) -> Result<(), String> {
 
     let renderer = anyrender_vello_cpu::VelloCpuWindowRenderer::new();
     let window = WindowConfig::new(doc, renderer);
-    let mut application = BlitzApplication::new(event_loop.create_proxy());
-    application.add_window(window);
+    let mut application = WheelApp {
+        inner: BlitzApplication::new(event_loop.create_proxy()),
+    };
+    application.inner.add_window(window);
     event_loop
         .run_app(&mut application)
         .map_err(|e| format!("event loop: {e}"))

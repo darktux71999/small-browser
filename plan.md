@@ -256,7 +256,7 @@ verify rendering with the CPU backend.
 
 ## Wave 1.5 — assigned in parallel
 
-### T11 (Agent B) — Cookie jar and persistence
+### T11 (Agent B) — Cookie jar and persistence — DONE (10 tests)
 
 Goal: real cookies for HTTP, stored through the existing SQLite `Store`.
 
