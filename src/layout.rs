@@ -7,9 +7,11 @@
 //! advances from the character count.
 
 use std::os::raw::{c_int, c_void};
+use std::rc::Rc;
 
 use crate::css::{Display, Style};
 use crate::dom::{Document, NodeId};
+use crate::img::{Image, ImageSet};
 
 #[derive(Debug, Clone)]
 pub struct LayoutBox {
@@ -25,6 +27,9 @@ pub struct LayoutBox {
     pub font_size: f64,
     pub bold: bool,
     pub centered: bool,
+    /// Decoded pixels for a replaced `<img>`; `None` for text/block boxes and
+    /// for images that failed to load.
+    pub image: Option<Rc<Image>>,
 }
 
 /// A text run as Pango sees it: the block's text plus the typography and the
@@ -47,6 +52,32 @@ pub struct Layout {
 }
 
 pub fn layout(doc: &Document, styles: &[Style], viewport_width: f64) -> Layout {
+    layout_with_images(doc, styles, viewport_width, &ImageSet::empty())
+}
+
+/// Lays `doc` out with its `<img>` subresources fetched and decoded.
+///
+/// `base` resolves relative `src` like the stylesheet loader does: the final
+/// document URL for http(s) pages, the containing directory for local files.
+/// Failures degrade to empty boxes and warnings; they never abort the render.
+pub fn layout_with_subresources(
+    doc: &Document,
+    styles: &[Style],
+    viewport_width: f64,
+    base: &str,
+) -> Layout {
+    let images = ImageSet::load(doc, base);
+    layout_with_images(doc, styles, viewport_width, &images)
+}
+
+/// Lays `doc` out against an already loaded [`ImageSet`], so the caller keeps
+/// the decoded images (and their warnings) for the rest of the run.
+pub fn layout_with_images(
+    doc: &Document,
+    styles: &[Style],
+    viewport_width: f64,
+    images: &ImageSet,
+) -> Layout {
     let shaper = TextShaper::new().expect("pango: cannot create a text measuring context");
     let mut boxes = Vec::new();
     let mut runs = Vec::new();
@@ -64,6 +95,7 @@ pub fn layout(doc: &Document, styles: &[Style], viewport_width: f64) -> Layout {
             cursor,
             viewport_width,
             &shaper,
+            images,
             &mut boxes,
             &mut runs,
         );
@@ -85,6 +117,7 @@ fn layout_node(
     origin_y: f64,
     available_width: f64,
     shaper: &TextShaper,
+    images: &ImageSet,
     out: &mut Vec<LayoutBox>,
     runs: &mut Vec<TextRun>,
 ) -> f64 {
@@ -92,17 +125,18 @@ fn layout_node(
     if style.display == Display::None {
         return 0.0;
     }
+    if is_image(doc, id) {
+        return layout_image(doc, styles, id, origin_x, origin_y, available_width, images, out);
+    }
     if style.display == Display::Inline {
         return 0.0; // inline runs are flushed by their block container
     }
 
-    let border_x = origin_x + style.margin[3];
-    let border_w = style
-        .width
-        .map(|w| w + style.padding[1] + style.padding[3])
-        .unwrap_or((available_width - style.margin[1] - style.margin[3]).max(1.0));
-    let content_x = border_x + style.padding[3];
-    let content_w = (border_w - style.padding[1] - style.padding[3]).max(1.0);
+    let content = content_box(style, origin_x, available_width);
+    let border_x = content.border_x;
+    let border_w = content.border_w;
+    let content_x = content.x;
+    let content_w = content.w;
 
     let border_y = origin_y + style.margin[0];
     let mut cursor_y = border_y + style.padding[0];
@@ -122,6 +156,7 @@ fn layout_node(
         font_size: style.font_size,
         bold: style.bold,
         centered: style.inline_align,
+        image: None,
     });
 
     let mut run = String::new();
@@ -129,6 +164,19 @@ fn layout_node(
         let child_style = &styles[child];
         match child_style.display {
             Display::None => {}
+            _ if is_image(doc, child) => {
+                // A replaced element takes its own line in this block flow, so
+                // the text collected so far is flushed above it.
+                if !run.trim().is_empty() {
+                    cursor_y += flush_text(
+                        shaper, style, content_x, cursor_y, content_w, &mut run, out, runs,
+                    );
+                }
+                run.clear();
+                cursor_y += layout_node(
+                    doc, styles, child, content_x, cursor_y, content_w, shaper, images, out, runs,
+                );
+            }
             Display::Block => {
                 if !run.trim().is_empty() {
                     cursor_y += flush_text(
@@ -137,7 +185,7 @@ fn layout_node(
                 }
                 run.clear();
                 cursor_y += layout_node(
-                    doc, styles, child, content_x, cursor_y, content_w, shaper, out, runs,
+                    doc, styles, child, content_x, cursor_y, content_w, shaper, images, out, runs,
                 );
             }
             Display::Inline => collect_inline_text(doc, child, &mut run),
@@ -155,6 +203,137 @@ fn layout_node(
     out[box_index].h = border_h.max(0.0);
 
     border_h + style.margin[0] + style.margin[2]
+}
+
+/// The content box of a block-level element: the rectangle its children (and a
+/// replaced image) live in.
+struct ContentBox {
+    /// Left edge of the border box.
+    border_x: f64,
+    /// Width of the border box.
+    border_w: f64,
+    /// Left edge of the content box.
+    x: f64,
+    /// Width of the content box.
+    w: f64,
+}
+
+fn content_box(style: &Style, origin_x: f64, available_width: f64) -> ContentBox {
+    let border_x = origin_x + style.margin[3];
+    let border_w = style
+        .width
+        .map(|w| w + style.padding[1] + style.padding[3])
+        .unwrap_or((available_width - style.margin[1] - style.margin[3]).max(1.0));
+    ContentBox {
+        border_x,
+        border_w,
+        x: border_x + style.padding[3],
+        w: (border_w - style.padding[1] - style.padding[3]).max(1.0),
+    }
+}
+
+fn is_image(doc: &Document, id: NodeId) -> bool {
+    !doc.nodes[id].is_text && doc.nodes[id].tag.eq_ignore_ascii_case("img")
+}
+
+/// Lays out a replaced `<img>`: one box holding the decoded pixels, sized from
+/// its intrinsic dimensions (or the author's width/height) and never wider than
+/// the content box. Returns the space it takes in the flow.
+fn layout_image(
+    doc: &Document,
+    styles: &[Style],
+    id: NodeId,
+    origin_x: f64,
+    origin_y: f64,
+    available_width: f64,
+    images: &ImageSet,
+    out: &mut Vec<LayoutBox>,
+) -> f64 {
+    let style = &styles[id];
+    let content = content_box(style, origin_x, available_width);
+    let image = images.image(id);
+    let (w, h) = image_size(&doc.nodes[id], style, image.as_deref(), content.w);
+    let y = origin_y + style.margin[0] + style.padding[0];
+
+    out.push(LayoutBox {
+        node: id,
+        tag: doc.nodes[id].tag.clone(),
+        x: content.x,
+        y,
+        w,
+        h,
+        text: None,
+        color: style.color,
+        background: style.background,
+        font_size: style.font_size,
+        bold: style.bold,
+        centered: style.inline_align,
+        image,
+    });
+
+    h + style.margin[0] + style.margin[2]
+}
+
+/// The painted size of an image box.
+///
+/// CSS `width`/`height` win over the HTML `width`/`height` attributes, and both
+/// win over the intrinsic pixel size. A single dimension keeps the intrinsic
+/// aspect ratio; without pixels (failed or missing image) it stays 0. The
+/// result never exceeds the content box: a wider image is scaled down on both
+/// axes instead of overflowing its container.
+fn image_size(
+    node: &crate::dom::Node,
+    style: &Style,
+    image: Option<&Image>,
+    max_width: f64,
+) -> (f64, f64) {
+    let (intrinsic_w, intrinsic_h) = image
+        .map(|image| (image.width as f64, image.height as f64))
+        .unwrap_or((0.0, 0.0));
+
+    let width_hint = style
+        .width
+        .or_else(|| node.attr("width").and_then(length_px));
+    let height_hint = style
+        .height
+        .or_else(|| node.attr("height").and_then(length_px));
+
+    let (mut w, mut h) = match (width_hint, height_hint) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, scale_by(intrinsic_w, intrinsic_h, w)),
+        (None, Some(h)) => (scale_by(intrinsic_h, intrinsic_w, h), h),
+        (None, None) => (intrinsic_w, intrinsic_h),
+    };
+
+    if w > max_width {
+        let scale = max_width / w;
+        w = max_width;
+        h *= scale;
+    }
+    (w.max(0.0), h.max(0.0))
+}
+
+/// `known * wanted / basis`, i.e. the missing side of an aspect ratio. A zero
+/// basis (no pixels decoded) has no ratio to preserve.
+fn scale_by(basis: f64, other: f64, wanted: f64) -> f64 {
+    if basis > 0.0 {
+        other * wanted / basis
+    } else {
+        0.0
+    }
+}
+
+/// An HTML length attribute (`width="30"`, `height="30px"`) in CSS pixels.
+/// Percentages and unparsable values are ignored: they do not size the box.
+fn length_px(value: &str) -> Option<f64> {
+    let value = value.trim();
+    let value = value
+        .strip_suffix("px")
+        .or_else(|| value.strip_suffix("PX"))
+        .unwrap_or(value)
+        .trim();
+    let px: f64 = value.parse().ok()?;
+    (px.is_finite() && px >= 0.0).then_some(px)
 }
 
 /// Concatenates the inline descendants of a block into a single text run.
@@ -208,6 +387,7 @@ fn flush_text(
             font_size: style.font_size,
             bold: style.bold,
             centered: false,
+            image: None,
         });
     }
 

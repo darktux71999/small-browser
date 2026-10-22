@@ -11,7 +11,8 @@ use std::path::Path;
 
 use cairo::{Context, Format, ImageSurface};
 
-use crate::layout::{pango, Layout};
+use crate::img::Image;
+use crate::layout::{pango, Layout, LayoutBox};
 
 #[derive(Clone)]
 pub struct Frame {
@@ -71,6 +72,13 @@ fn draw(surface: &ImageSurface, layout: &Layout) -> Result<(), String> {
         }
     }
 
+    // Decoded `<img>` pixels, scaled into their layout box.
+    for b in &layout.boxes {
+        if let Some(image) = &b.image {
+            draw_image(&cr, b, image)?;
+        }
+    }
+
     // 72 dpi, exactly like the measuring context in `layout`: 1pt == 1px.
     let cr_ptr = cr.to_raw_none() as *mut c_void;
     let ctx = unsafe { pango::pango_cairo_create_context(cr_ptr) };
@@ -96,4 +104,56 @@ fn draw(surface: &ImageSurface, layout: &Layout) -> Result<(), String> {
 
     unsafe { pango::g_object_unref(ctx) };
     Ok(())
+}
+
+/// Draws one image inside its layout box, scaling it when the box differs from
+/// the intrinsic size (author `width`/`height`, or the content-box clamp).
+fn draw_image(cr: &Context, b: &LayoutBox, image: &Image) -> Result<(), String> {
+    if b.w <= 0.0 || b.h <= 0.0 || image.width == 0 || image.height == 0 {
+        return Ok(());
+    }
+    let surface = rgba_surface(image)?;
+    let pattern = cairo::SurfacePattern::create(&surface);
+    // Boxes are usually scaled up from a small logo, so spend the filter.
+    pattern.set_filter(cairo::Filter::Good);
+    pattern.set_extend(cairo::Extend::Pad);
+
+    cr.save().map_err(|e| e.to_string())?;
+    cr.rectangle(b.x, b.y, b.w, b.h);
+    cr.clip();
+    cr.translate(b.x, b.y);
+    cr.scale(b.w / f64::from(image.width), b.h / f64::from(image.height));
+    cr.set_source(&pattern).map_err(|e| e.to_string())?;
+    cr.paint().map_err(|e| e.to_string())?;
+    cr.restore().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Cairo's ARGB32 is premultiplied, native-endian; [`Image`] is
+/// non-premultiplied RGBA8, so every pixel is converted on the way in.
+fn rgba_surface(image: &Image) -> Result<ImageSurface, String> {
+    let width = image.width as i32;
+    let height = image.height as i32;
+    let mut surface = ImageSurface::create(Format::ARgb32, width, height)
+        .map_err(|e| format!("image surface: {e}"))?;
+    let stride = surface.stride() as usize;
+    {
+        let mut data = surface.data().map_err(|e| e.to_string())?;
+        for y in 0..image.height as usize {
+            let row = y * stride;
+            for x in 0..image.width as usize {
+                let src = (y * image.width as usize + x) * 4;
+                let alpha = u32::from(image.rgba[src + 3]);
+                let premultiply = |channel: u8| u32::from(channel) * alpha / 255;
+                // 0xAARRGGBB, the ARGB32 word cairo expects.
+                let word = (alpha << 24)
+                    | (premultiply(image.rgba[src]) << 16)
+                    | (premultiply(image.rgba[src + 1]) << 8)
+                    | premultiply(image.rgba[src + 2]);
+                let dst = row + x * 4;
+                data[dst..dst + 4].copy_from_slice(&word.to_ne_bytes());
+            }
+        }
+    }
+    Ok(surface)
 }

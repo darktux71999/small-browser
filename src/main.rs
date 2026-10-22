@@ -104,7 +104,7 @@ fn main() -> ExitCode {
         }
     }
 
-    let layout = layout::layout(&doc, &styles, VIEWPORT_WIDTH);
+    let layout = layout::layout_with_subresources(&doc, &styles, VIEWPORT_WIDTH, &base);
 
     match png {
         Some(path) => {

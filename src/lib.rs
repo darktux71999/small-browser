@@ -6,6 +6,7 @@ pub mod css;
 pub mod css_libcss;
 pub mod dom;
 pub mod history;
+pub mod img;
 pub mod js;
 pub mod layout;
 pub mod net;
