@@ -40,7 +40,7 @@ codeberg.org. Mirror Engram: pendiente.
 | T1 | Subrecursos CSS (`<link>`, `@import` remoto, caché, resolución de URLs relativas, orden de documento) | S2 | 1 (paralela) | ✅ 13 tests; codeberg ink 0,043 → 0,206 |
 | T2 | `window` + APIs DOM mínimas para scripts | S4 | 1 (paralela) | ✅ 16 tests; codeberg sin errores de script |
 | T3 | Texto a Pango + wrapping real (absorbe el bug de líneas cortadas) | S5 | 2 | ✅ 0f61753 (codeberg: 0 líneas cortadas; altura 3014→4123) |
-| T4 | Imágenes (`<img>`: fetch, decode, pintura en caja) | S3 | 2 | pendiente |
+| T4 | Imágenes (`<img>`: fetch, decode, pintura en caja) | S3 | 2 | ✅ 011bfc6 (16 tests; logo de Codeberg pintando, SVG degradan con aviso) |
 | T5 | Medición de la Meta 1 + informe | S1,S6 | 3 | pendiente |
 
 Nota de planificación (aceptada): el bug de wrapping NO se arregla en la ruta de
@@ -70,3 +70,18 @@ sería bug de anchura de caja y se corrige ahí.
   resuelve fontconfig como fallback); con JetBrains Mono como única fuente instalada
   no es observable. Decisión de interfaz registrada por el usuario: navegación a
   puro teclado estilo luakit/vimb (vi), en `docs/objetivos.md`.
+- **L3** (2026-10-22): **Ola 2 cerrada**. T3 (Pango, commit 0f61753) + T4 (imágenes,
+  commit 011bfc6). T4: `src/img.rs` (fetch+decode+cache: PNG/JPEG/GIF vía gdk-pixbuf,
+  WebP vía libwebp, tope 10MB, guarda de bombas de descompresión, SVG documentado como
+  no soportado), `<img>` como elemento reemplazado (tamaño intrínseco, CSS sobre
+  atributos, aspect-ratio con una sola dimensión, clamp a la caja de contenido),
+  pintura premultiplicada en ambos caminos de salida. 16 tests (RED observado en la
+  base: 0 píxeles de imagen); diferencial: páginas sin imágenes byte-idénticas. El
+  worker pidió permiso para tocar `main.rs` y el padre aplicó la línea (cableado de la
+  base del documento a `layout_with_subresources`) — los writers no tocan `main.rs`.
+  Verificación en vivo: codeberg.org pinta el logo PNG (258×250, wordmark incluido);
+  los 4 SVG de la página degradan con `browser-lite: skipping image ...` no fatal.
+  Suites: 122 tests verdes + 1 ignorada; assess RDD `medium / under_budget`.
+  Modelo de subagentes cambiado por el usuario: ahora
+  `opencode-go/minimax-m3.1-flash-free` (MiniMax M3.1 Flash Free); Muse Spark 1.3
+  cancelado. Pendiente: T5 (medición de la Meta 1 + informe).
