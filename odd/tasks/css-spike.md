@@ -72,3 +72,10 @@ produzca la tabla de memoria, fidelidad y líneas de código para decidir. Branc
   fidelidad a favor de libcss en 3/5 (peor caso 13,05 vs 8,94 en @media; empate
   exacto en especificidad), LOC 579 (css.rs) vs 87.604 (libcss+glue). Hallazgo de
   diseño: libcss no trae hoja UA y las @media necesitan el viewport en la cascada.
+- **L3** (2026-10-22): assess RDD del slice (base `master`): riesgo `high` con
+  razones nombradas (`executable_mode` en `spikes/css/compare.sh`;
+  `process_boundary`/`shell_source` en `spikes/css/build-libcss.sh`). Revisión
+  ofrecida con lentes `review-risk,review-resilience,reliability`; el usuario
+  eligió "Omitir esta vez" → `declined_this_candidate` (candidate-scoped; entrega
+  bajo política ordinaria). Tier por commit: 0b3a224/0f48b9b/73c7db5 docs+tooling,
+  7304050 refactor pedido por el usuario, 263d623+eb64f2a spike autocontenido.
