@@ -33,15 +33,28 @@ fn main() -> ExitCode {
     }
 
     let Some(file) = file else {
-        eprintln!("usage: browser-lite [--dump] [--png out.png] file.html");
+        eprintln!("usage: browser-lite [--dump] [--png out.png] <file.html|http(s)://url>");
         return ExitCode::from(2);
     };
 
-    let html = match std::fs::read_to_string(&file) {
-        Ok(html) => html,
-        Err(err) => {
-            eprintln!("browser-lite: {}: {err}", file.display());
-            return ExitCode::from(1);
+    // Una URL http(s) se descarga con el cliente del sistema (net.rs/curl); un
+    // camino se lee del disco. El resto del pipeline es idéntico.
+    let source = file.to_string_lossy().to_string();
+    let html = if source.starts_with("http://") || source.starts_with("https://") {
+        match browser_lite::net::fetch_text(&source) {
+            Ok(html) => html,
+            Err(err) => {
+                eprintln!("browser-lite: {source}: {err}");
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        match std::fs::read_to_string(&file) {
+            Ok(html) => html,
+            Err(err) => {
+                eprintln!("browser-lite: {}: {err}", file.display());
+                return ExitCode::from(1);
+            }
         }
     };
 
