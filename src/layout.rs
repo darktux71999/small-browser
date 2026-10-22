@@ -1,5 +1,12 @@
 //! Block-flow layout for the MVP subset.
 //! Produces absolute boxes consumed by both the PNG painter and `--dump`.
+//!
+//! Text is measured, wrapped, aligned and justified by Pango: the run is laid
+//! out once with the real font metrics inside the content box, and the same
+//! layout is rebuilt at paint time from [`TextRun`]. Nothing here estimates
+//! advances from the character count.
+
+use std::os::raw::{c_int, c_void};
 
 use crate::css::{Display, Style};
 use crate::dom::{Document, NodeId};
@@ -20,25 +27,51 @@ pub struct LayoutBox {
     pub centered: bool,
 }
 
+/// A text run as Pango sees it: the block's text plus the typography and the
+/// wrap width. Paint rebuilds the layout from this instead of re-wrapping.
+#[derive(Debug, Clone)]
+pub struct TextRun {
+    pub x: f64,
+    pub y: f64,
+    /// Wrap width, i.e. the content box the run lives in.
+    pub width: f64,
+    pub text: String,
+    pub style: Style,
+}
+
 pub struct Layout {
     pub boxes: Vec<LayoutBox>,
+    pub runs: Vec<TextRun>,
     pub width: f64,
     pub height: f64,
 }
 
 pub fn layout(doc: &Document, styles: &[Style], viewport_width: f64) -> Layout {
+    let shaper = TextShaper::new().expect("pango: cannot create a text measuring context");
     let mut boxes = Vec::new();
+    let mut runs = Vec::new();
     let mut cursor = 0.0;
 
     for &child in &doc.nodes[doc.root].children {
         if styles[child].display == Display::None {
             continue;
         }
-        cursor += layout_node(doc, styles, child, 0.0, cursor, viewport_width, &mut boxes);
+        cursor += layout_node(
+            doc,
+            styles,
+            child,
+            0.0,
+            cursor,
+            viewport_width,
+            &shaper,
+            &mut boxes,
+            &mut runs,
+        );
     }
 
     Layout {
         boxes,
+        runs,
         width: viewport_width,
         height: cursor.max(1.0),
     }
@@ -51,7 +84,9 @@ fn layout_node(
     origin_x: f64,
     origin_y: f64,
     available_width: f64,
+    shaper: &TextShaper,
     out: &mut Vec<LayoutBox>,
+    runs: &mut Vec<TextRun>,
 ) -> f64 {
     let style = &styles[id];
     if style.display == Display::None {
@@ -96,17 +131,21 @@ fn layout_node(
             Display::None => {}
             Display::Block => {
                 if !run.trim().is_empty() {
-                    cursor_y += flush_text(doc, style, content_x, cursor_y, content_w, &mut run, out);
+                    cursor_y += flush_text(
+                        shaper, style, content_x, cursor_y, content_w, &mut run, out, runs,
+                    );
                 }
                 run.clear();
-                cursor_y +=
-                    layout_node(doc, styles, child, content_x, cursor_y, content_w, out);
+                cursor_y += layout_node(
+                    doc, styles, child, content_x, cursor_y, content_w, shaper, out, runs,
+                );
             }
             Display::Inline => collect_inline_text(doc, child, &mut run),
         }
     }
     if !run.trim().is_empty() {
-        cursor_y += flush_text(doc, style, content_x, cursor_y, content_w, &mut run, out);
+        cursor_y +=
+            flush_text(shaper, style, content_x, cursor_y, content_w, &mut run, out, runs);
     }
 
     let mut border_h = cursor_y - border_y + style.padding[2];
@@ -133,14 +172,17 @@ fn collect_inline_text(doc: &Document, id: NodeId, out: &mut String) {
     }
 }
 
+/// Lays a run out with Pango inside `width` and pushes one `#text` box per
+/// visual line, plus the run itself for the painter. Returns the run height.
 fn flush_text(
-    _doc: &Document,
+    shaper: &TextShaper,
     style: &Style,
     x: f64,
     y: f64,
     width: f64,
     run: &mut String,
     out: &mut Vec<LayoutBox>,
+    runs: &mut Vec<TextRun>,
 ) -> f64 {
     let text = run.split_whitespace().collect::<Vec<_>>().join(" ");
     run.clear();
@@ -148,53 +190,301 @@ fn flush_text(
         return 0.0;
     }
 
-    let char_w = (style.font_size * 0.52).max(1.0);
-    let max_chars = ((width / char_w).floor() as usize).max(1);
-    let line_height = style.font_size * 1.25;
-
-    let mut lines: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for word in text.split(' ') {
-        let candidate_len = if current.is_empty() {
-            word.chars().count()
-        } else {
-            current.chars().count() + 1 + word.chars().count()
-        };
-        if candidate_len > max_chars && !current.is_empty() {
-            lines.push(std::mem::take(&mut current));
+    let measured = shaper.measure(&text, style, width);
+    for line in &measured.lines {
+        if line.text.is_empty() {
+            continue;
         }
-        if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(word);
-    }
-    if !current.is_empty() {
-        lines.push(current);
-    }
-
-    let mut cy = y;
-    for line in &lines {
-        let line_w = line.chars().count() as f64 * char_w;
-        let lx = if style.inline_align {
-            x + ((width - line_w) / 2.0).max(0.0)
-        } else {
-            x
-        };
         out.push(LayoutBox {
             node: usize::MAX,
             tag: "#text".to_string(),
-            x: lx,
-            y: cy,
-            w: line_w.min(width),
-            h: line_height,
-            text: Some(line.clone()),
+            x: x + line.x,
+            y: y + line.y,
+            w: line.w,
+            h: line.h,
+            text: Some(line.text.clone()),
             color: style.color,
             background: None,
             font_size: style.font_size,
             bold: style.bold,
             centered: false,
         });
-        cy += line_height;
     }
-    cy - y
+
+    runs.push(TextRun {
+        x,
+        y,
+        width,
+        text,
+        style: style.clone(),
+    });
+    measured.height
 }
+
+/// One visual line as Pango placed it, relative to the run origin.
+struct MeasuredLine {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    text: String,
+}
+
+struct MeasuredText {
+    height: f64,
+    lines: Vec<MeasuredLine>,
+}
+
+/// A Pango context used only for measuring. It hangs off a scratch image
+/// surface; the real painting context is built by `paint` from its own cairo
+/// target, using the same 72 dpi so both agree on metrics.
+struct TextShaper {
+    ctx: *mut c_void,
+    // Keep the scratch target alive: the PangoContext references it.
+    _surface: cairo::ImageSurface,
+    _cr: cairo::Context,
+}
+
+impl TextShaper {
+    fn new() -> Option<TextShaper> {
+        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 8, 8).ok()?;
+        let cr = cairo::Context::new(&surface).ok()?;
+        let ctx = unsafe { pango::pango_cairo_create_context(cr.to_raw_none() as *mut c_void) };
+        if ctx.is_null() {
+            return None;
+        }
+        // 72 dpi: 1pt == 1px, so CSS px sizes map 1:1 to Pango font sizes.
+        unsafe { pango::pango_cairo_context_set_resolution(ctx, 72.0) };
+        Some(TextShaper {
+            ctx,
+            _surface: surface,
+            _cr: cr,
+        })
+    }
+
+    fn measure(&self, text: &str, style: &Style, width: f64) -> MeasuredText {
+        let layout = pango::create_layout(self.ctx, text, style, width);
+        if layout.is_null() {
+            return MeasuredText {
+                height: 0.0,
+                lines: Vec::new(),
+            };
+        }
+
+        let mut pixel_width = 0;
+        let mut pixel_height = 0;
+        let mut lines = Vec::new();
+        unsafe {
+            pango::pango_layout_get_pixel_size(layout, &mut pixel_width, &mut pixel_height);
+            let count = pango::pango_layout_get_line_count(layout);
+            for index in 0..count {
+                let line = pango::pango_layout_get_line(layout, index);
+                if line.is_null() {
+                    continue;
+                }
+                let mut ink = pango::PangoRectangle::default();
+                let mut logical = pango::PangoRectangle::default();
+                pango::pango_layout_line_get_pixel_extents(line, &mut ink, &mut logical);
+                let start = (*line).start_index.max(0) as usize;
+                let len = (*line).length.max(0) as usize;
+                // Line extents are relative to the line itself; the position of
+                // the line's first character is relative to the layout origin
+                // and already includes the alignment offset.
+                let mut pos = pango::PangoRectangle::default();
+                pango::pango_layout_index_to_pos(layout, start as c_int, &mut pos);
+                let slice = text.get(start..start.saturating_add(len)).unwrap_or("");
+                lines.push(MeasuredLine {
+                    x: pos.x as f64 / pango::PANGO_SCALE,
+                    y: pos.y as f64 / pango::PANGO_SCALE,
+                    w: logical.width as f64,
+                    h: logical.height as f64,
+                    text: slice.trim().to_string(),
+                });
+            }
+            pango::g_object_unref(layout);
+        }
+
+        MeasuredText {
+            height: pixel_height as f64,
+            lines,
+        }
+    }
+}
+
+impl Drop for TextShaper {
+    fn drop(&mut self) {
+        unsafe { pango::g_object_unref(self.ctx) };
+    }
+}
+
+/// Hand-written Pango/PangoCairo FFI, in the same style as `src/sys.rs`.
+/// Signatures follow the system Pango 1.58 headers; no intermediate crates.
+pub(crate) mod pango {
+    use std::ffi::CString;
+    use std::os::raw::{c_char, c_double, c_int, c_void};
+
+    use crate::css::{Style, TextAlign};
+
+    /// Pango's fixed-point scale for font sizes and lengths.
+    pub const PANGO_SCALE: f64 = 1024.0;
+
+    const PANGO_ALIGN_LEFT: c_int = 0;
+    const PANGO_ALIGN_CENTER: c_int = 1;
+    const PANGO_ALIGN_RIGHT: c_int = 2;
+
+    const PANGO_STYLE_NORMAL: c_int = 0;
+    const PANGO_STYLE_ITALIC: c_int = 2;
+
+    #[repr(C)]
+    #[derive(Default)]
+    pub struct PangoRectangle {
+        pub x: c_int,
+        pub y: c_int,
+        pub width: c_int,
+        pub height: c_int,
+    }
+
+    /// `PangoLayoutLine` is a public struct in the pango headers: reading
+    /// `start_index`/`length` gives the bytes of each visual line.
+    #[repr(C)]
+    pub struct PangoLayoutLine {
+        pub layout: *mut c_void,
+        pub start_index: c_int,
+        pub length: c_int,
+        pub runs: *mut c_void,
+    }
+
+    #[link(name = "pangocairo-1.0")]
+    extern "C" {
+        pub fn pango_cairo_create_context(cr: *mut c_void) -> *mut c_void;
+        pub fn pango_cairo_context_set_resolution(context: *mut c_void, dpi: c_double);
+        pub fn pango_cairo_update_layout(cr: *mut c_void, layout: *mut c_void);
+        pub fn pango_cairo_show_layout(cr: *mut c_void, layout: *mut c_void);
+    }
+
+    #[link(name = "pango-1.0")]
+    extern "C" {
+        pub fn pango_layout_new(context: *mut c_void) -> *mut c_void;
+        pub fn pango_layout_set_text(layout: *mut c_void, text: *const c_char, length: c_int);
+        pub fn pango_layout_set_font_description(layout: *mut c_void, desc: *const c_void);
+        pub fn pango_layout_set_width(layout: *mut c_void, width: c_int);
+        pub fn pango_layout_set_alignment(layout: *mut c_void, alignment: c_int);
+        pub fn pango_layout_set_justify(layout: *mut c_void, justify: c_int);
+        pub fn pango_layout_set_attributes(layout: *mut c_void, attrs: *mut c_void);
+        pub fn pango_layout_get_pixel_size(
+            layout: *mut c_void,
+            width: *mut c_int,
+            height: *mut c_int,
+        );
+        pub fn pango_layout_get_line_count(layout: *mut c_void) -> c_int;
+        pub fn pango_layout_get_line(layout: *mut c_void, line: c_int) -> *mut PangoLayoutLine;
+        pub fn pango_layout_index_to_pos(
+            layout: *mut c_void,
+            index: c_int,
+            pos: *mut PangoRectangle,
+        );
+        pub fn pango_layout_line_get_pixel_extents(
+            line: *mut PangoLayoutLine,
+            ink_rect: *mut PangoRectangle,
+            logical_rect: *mut PangoRectangle,
+        );
+        pub fn pango_font_description_from_string(str: *const c_char) -> *mut c_void;
+        pub fn pango_font_description_free(desc: *mut c_void);
+        pub fn pango_font_description_set_family(desc: *mut c_void, family: *const c_char);
+        pub fn pango_font_description_set_size(desc: *mut c_void, size: c_int);
+        pub fn pango_font_description_set_weight(desc: *mut c_void, weight: c_int);
+        pub fn pango_font_description_set_style(desc: *mut c_void, style: c_int);
+        pub fn pango_attr_list_new() -> *mut c_void;
+        pub fn pango_attr_list_insert(list: *mut c_void, attr: *mut c_void);
+        pub fn pango_attr_list_unref(list: *mut c_void);
+        pub fn pango_attr_letter_spacing_new(spacing: c_int) -> *mut c_void;
+        pub fn pango_attr_line_height_new(factor: c_double) -> *mut c_void;
+    }
+
+    #[link(name = "gobject-2.0")]
+    extern "C" {
+        pub fn g_object_unref(obj: *mut c_void);
+    }
+
+    /// Builds the Pango layout shared by measurement and painting, so both see
+    /// the same font, width, alignment, line height and tracking.
+    pub fn create_layout(
+        ctx: *mut c_void,
+        text: &str,
+        style: &Style,
+        width: f64,
+    ) -> *mut c_void {
+        unsafe {
+            let layout = pango_layout_new(ctx);
+            if layout.is_null() {
+                return layout;
+            }
+
+            let desc = pango_font_description_from_string(b"Sans\0".as_ptr() as *const c_char);
+            let family = CString::new(family_name(&style.font_family)).unwrap_or_default();
+            pango_font_description_set_family(desc, family.as_ptr());
+            pango_font_description_set_size(
+                desc,
+                (style.font_size.max(0.0) * PANGO_SCALE) as c_int,
+            );
+            pango_font_description_set_weight(desc, style.font_weight.clamp(100, 900) as c_int);
+            pango_font_description_set_style(
+                desc,
+                if style.italic {
+                    PANGO_STYLE_ITALIC
+                } else {
+                    PANGO_STYLE_NORMAL
+                },
+            );
+            pango_layout_set_font_description(layout, desc);
+            pango_font_description_free(desc);
+
+            // NUL would truncate the CString; Pango takes an explicit length.
+            let text = text.replace('\0', " ");
+            let text_c = CString::new(text).unwrap_or_default();
+            pango_layout_set_text(layout, text_c.as_ptr(), text_c.as_bytes().len() as c_int);
+            pango_layout_set_width(layout, (width.max(1.0) * PANGO_SCALE) as c_int);
+            pango_layout_set_alignment(
+                layout,
+                match style.text_align {
+                    TextAlign::Left | TextAlign::Justify => PANGO_ALIGN_LEFT,
+                    TextAlign::Center => PANGO_ALIGN_CENTER,
+                    TextAlign::Right => PANGO_ALIGN_RIGHT,
+                },
+            );
+            if style.text_align == TextAlign::Justify {
+                pango_layout_set_justify(layout, 1);
+            }
+
+            // Line height and tracking are attributes in Pango 1.58: the layout
+            // has no setter for them.
+            let attrs = pango_attr_list_new();
+            pango_attr_list_insert(
+                attrs,
+                pango_attr_line_height_new(style.line_height.max(0.0)),
+            );
+            if style.letter_spacing != 0.0 {
+                pango_attr_list_insert(
+                    attrs,
+                    pango_attr_letter_spacing_new((style.letter_spacing * PANGO_SCALE) as c_int),
+                );
+            }
+            pango_layout_set_attributes(layout, attrs);
+            pango_attr_list_unref(attrs);
+
+            layout
+        }
+    }
+
+    /// libcss keeps the family as written; strip the CSS quotes and fall back
+    /// to Pango's default family when it is empty.
+    fn family_name(family: &str) -> String {
+        let trimmed = family.trim().trim_matches(['"', '\'']).trim();
+        if trimmed.is_empty() {
+            "Sans".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+}
+
