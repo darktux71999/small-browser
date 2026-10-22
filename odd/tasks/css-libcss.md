@@ -74,3 +74,16 @@ Mirror Engram: pendiente (la herramienta no está disponible en este runtime).
   de libwapcaplet no son atómicos → selección de estilo serializada con mutex.
   Seam check del padre: motor enlazando desde /usr/lib sin `CSS_LIB_PREFIX`, suites
   del motor (51+) y del spike (1) verdes.
+- **L3** (2026-10-22): verificador independiente sobre cfafc50 (Risk item 4 —
+  mutex de concurrencia + ciclo de vida unsafe del FFI): **S2/S3/S4/S5 cumplidos,
+  0 bloqueadores**. El item de riesgo sale sano con control negativo: quitar el
+  lock revienta con SIGSEGV en 8 hilos; con lock, 10/10 carreras y 48 procesos
+  `--dump` deterministas. Teardown y ownership verificados contra la fuente de
+  libcss 0.9.2. Corrección en lote único (commit cff120e): advisory A1 — `build.rs`
+  prefería el prefijo dev del spike y mi seam check estaba contaminado; ahora solo
+  se añade `CSS_LIB_PREFIX` si se pasa explícito, y el recheck confirma link desde
+  `/usr/lib` + suites verdes + 8 sondas de regresión comitadas. Advisories abiertos
+  documentados como `#[ignore]` en `tests/css_libcss_verify.rs`: A2 (bug upstream:
+  libcss 0.9.2 resuelve `vw` contra la altura y `vh` contra el ancho) y A3 (`rem`
+  ignora el font-size del raíz porque `css_unit_ctx.root_style` es NULL) —
+  candidatos a un corte posterior.
