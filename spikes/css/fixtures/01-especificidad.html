@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Especificidad</title>
+  <style>
+    body { margin: 0; padding: 0; background: #ffffff; color: #111111; font-size: 16px; }
+    div { color: #00aa00; }
+    .caja { background: #dddddd; color: #0000ff; margin: 8px; padding: 8px; font-size: 18px; }
+    #destino { background: #ffcccc; color: #cc0000; margin: 12px; padding: 12px; font-size: 22px; }
+  </style>
+</head>
+<body>
+  <div class="caja" id="destino">Texto destino: la regla #destino debe ganar a .caja y a div.</div>
+  <div class="caja" id="clase">Texto clase: .caja debe ganar a la regla de etiqueta div.</div>
+  <p>Texto suelto sin regla propia.</p>
+</body>
+</html>

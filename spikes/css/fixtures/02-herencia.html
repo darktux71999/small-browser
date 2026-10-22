@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Herencia</title>
+  <style>
+    body { color: #222222; font-size: 16px; margin: 0; padding: 4px; }
+    .nivel1 { font-size: 20px; color: #0044aa; margin: 10px; padding: 6px; background: #eeeeee; }
+    .nivel2 { font-size: 1.5em; margin: 4px; padding: 4px; }
+    .nivel3 { font-size: 50%; padding: 2px; background: #ffffff; }
+  </style>
+</head>
+<body>
+  <div class="nivel1">
+    nivel1 a 20px con color propio
+    <div class="nivel2">
+      nivel2 a 1.5em = 30px, color heredado de nivel1
+      <div class="nivel3">
+        nivel3 a 50% de 30px = 15px, color heredado hasta el fondo
+      </div>
+    </div>
+  </div>
+</body>
+</html>

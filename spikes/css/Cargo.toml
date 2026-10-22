@@ -1,0 +1,19 @@
+[package]
+name = "css-spike"
+version = "0.1.0"
+edition = "2021"
+
+# Spike acotado (odd/tasks/css-spike.md, T2): compara dos proveedores de estilo
+# sobre el mismo renderer. Se puede borrar sin tocar el motor.
+[dependencies]
+browser-lite = { path = "../..", default-features = false }
+
+[[bin]]
+name = "css-spike"
+path = "src/main.rs"
+
+[lib]
+name = "css_spike"
+path = "src/lib.rs"
+# Este toolchain no trae rustdoc: sin esto, `cargo test` muere en la fase --doc.
+doctest = false

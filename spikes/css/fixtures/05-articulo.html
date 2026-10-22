@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Artículo</title>
+  <style>
+    body { margin: 0; padding: 8px; background: #ffffff; color: #202124; font-size: 16px; }
+    article { margin: 8px; padding: 12px; background: #fbfbfb; }
+    h1 { font-size: 30px; font-weight: 700; color: #0b3d5c; margin: 6px; padding: 4px; }
+    h2 { font-size: 22px; font-weight: 600; color: #14607a; margin: 6px; padding: 3px; }
+    p { margin: 8px; padding: 4px; line-height: 1.6; }
+    .destacado { background: #fff3cd; color: #7a5b00; padding: 8px; margin: 8px; font-size: 18px; }
+    blockquote {
+      margin: 12px;
+      padding: 10px;
+      background: #eef4f8;
+      color: #0b3d5c;
+      font-style: italic;
+      line-height: 1.7;
+    }
+    ul { margin: 8px; padding: 8px; background: #f6f6f6; }
+    li { margin: 4px; padding: 3px; color: #333333; }
+    #pie { margin: 10px; padding: 8px; background: #202124; color: #ffffff; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <article>
+    <h1>Notas sobre navegadores mínimos</h1>
+    <p>
+      Un motor pequeño decide explícitamente qué parte de CSS soporta; la
+      comparación entre proveedores mide exactamente esa decisión.
+    </p>
+    <h2>Lo que importa medir</h2>
+    <p class="destacado">
+      Especificidad, herencia, media queries y tipografía son las cuatro zonas
+      donde dos implementaciones dejan de parecerse.
+    </p>
+    <blockquote>
+      La memoria, la fidelidad y las líneas de código son las tres métricas de
+      esta tabla comparativa.
+    </blockquote>
+    <ul>
+      <li>Especificidad y orden de cascada</li>
+      <li>Herencia y unidades relativas</li>
+      <li>Media queries de pantalla</li>
+    </ul>
+    <p id="pie">Cierre del artículo, en franja oscura a 13px.</p>
+  </article>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Tipografía</title>
+  <style>
+    body { margin: 0; padding: 4px; }
+    h1 {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 28px;
+      font-weight: 800;
+      text-align: center;
+      letter-spacing: 2px;
+      margin: 10px;
+      padding: 4px;
+      color: #111111;
+      background: #f4f4f4;
+    }
+    p.largo {
+      font-family: sans-serif;
+      font-size: 16px;
+      line-height: 1.8;
+      text-align: justify;
+      letter-spacing: 0.5px;
+      margin: 10px;
+      padding: 6px;
+      color: #333333;
+      background: #fafafa;
+    }
+    p.cursiva {
+      font-family: serif;
+      font-size: 18px;
+      font-style: italic;
+      font-weight: 300;
+      line-height: 2;
+      text-align: right;
+      margin: 10px;
+      padding: 6px;
+      color: #663399;
+    }
+  </style>
+</head>
+<body>
+  <h1>Título centrado con tracking</h1>
+  <p class="largo">
+    Párrafo justificado con interlineado 1.8 y letter-spacing de medio píxel.
+    La tipografía es la capa donde el motor propio pierde más fidelidad hoy:
+    interlineado, justificación, cursiva, pesos y tracking tienen que salir de
+    la hoja de estilo y no del código de layout.
+  </p>
+  <p class="cursiva">
+    Párrafo en cursiva ligera alineado a la derecha con interlineado 2.
+  </p>
+</body>
+</html>
