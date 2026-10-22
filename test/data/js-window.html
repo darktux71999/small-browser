@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+  <title>window surface</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; padding: 24px; }
+    p { font-size: 20px; }
+  </style>
+</head>
+<body>
+  <p>window surface</p>
+  <script>
+    // The shape real landing pages use: window.* plus a lifecycle listener.
+    const unknown = window.__not_a_real_member === undefined;
+    window.addEventListener("DOMContentLoaded", function (event) {
+      const alias = window === globalThis;
+      const nav = typeof window.navigator.userAgent === "string";
+      const lifecycle = event.type === "DOMContentLoaded";
+      document.title = "window:" + alias + ":" + unknown + ":" + nav + ":" + lifecycle;
+    });
+  </script>
+</body>
+</html>

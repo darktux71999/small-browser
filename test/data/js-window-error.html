@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head>
+  <title>window error</title>
+</head>
+<body>
+  <p>window error</p>
+  <script>
+    document.title = "before-error";
+    window.__missing_function_that_pages_might_guard();
+    document.title = "unreachable";
+  </script>
+</body>
+</html>
