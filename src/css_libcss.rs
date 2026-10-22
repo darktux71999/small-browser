@@ -19,16 +19,30 @@
 //!   display defaults, margins and heading sizes the engine needs.
 //! - Media features (`@media`) are resolved against the viewport passed to
 //!   [`compute`], not against a fixed size.
+//! - External author sheets (`<link rel="stylesheet">` and `@import` chains)
+//!   are fetched by [`compute_with_subresources`]; the plain [`compute`] path
+//!   never touches the network or the filesystem beyond the document itself.
+//!   `@import` is resolved through `params.resolve` (libcss passes the sheet's
+//!   own URL as the base) and registered with `css_stylesheet_register_import`
+//!   after parsing, which is what keeps the imported rules before the
+//!   importing sheet in the cascade.
 //! - libcss borrows a reference to the strings returned by
 //!   `node_name`/`node_classes`/`node_id` and frees them itself; the class array
 //!   is allocated and freed by the client.
 
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
+use std::fs::File;
+use std::io::Read;
 use std::mem;
 use std::os::raw::{c_char, c_int, c_void};
+use std::path::{Component, Path, PathBuf};
 use std::ptr;
 use std::slice;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+use url::Url;
 
 use crate::css::{Color, Display, Style, TextAlign};
 use crate::dom::{Document, Node, NodeId};
@@ -1173,16 +1187,27 @@ unsafe extern "C" fn cb_get_libcss_node_data(
 
 unsafe extern "C" fn cb_resolve(
     _pw: *mut c_void,
-    _base: *const c_char,
+    base: *const c_char,
     rel: *mut LwcString,
     abs: *mut *mut LwcString,
 ) -> CssError {
-    // The engine does not fetch subresources here: a relative URL is taken as
-    // absolute, which is enough for the empty import sheets.
+    // libcss passes the sheet's own URL as `base`, which is why every sheet is
+    // created with the URL its relative `@import`s resolve against.
     if rel.is_null() {
         *abs = ptr::null_mut();
+        return CSS_OK;
+    }
+    let rel_text = String::from_utf8_lossy(lwc_bytes(rel)).into_owned();
+    let base_text = if base.is_null() {
+        String::new()
     } else {
-        *abs = lwc_ref(rel);
+        CStr::from_ptr(base).to_string_lossy().into_owned()
+    };
+    match join_url(&base_text, &rel_text) {
+        Some(absolute) => *abs = intern(&absolute),
+        // Unresolvable: hand the reference back unchanged. The import then has
+        // no fetchable URL and is registered as an empty sheet.
+        None => *abs = lwc_ref(rel),
     }
     CSS_OK
 }
@@ -1252,16 +1277,26 @@ unsafe fn create_empty_sheet(url: &[u8]) -> *mut CssStylesheet {
     sheet
 }
 
-/// Register empty sheets for pending `@import`s: there is no network resource
-/// to fetch here, but libcss requires every import to have a registered sheet.
-unsafe fn finish_imports(parent: *mut CssStylesheet) {
+/// Register the sheets libcss is waiting for on this parent's `@import` list.
+///
+/// Each pending URL is fetched (and its own imports with it), parsed, and
+/// registered, so imported rules keep their place *before* the importing
+/// sheet's rules in the cascade. Without a loader — the legacy [`compute`] path
+/// — an empty sheet is registered instead, as libcss requires.
+unsafe fn finish_imports(parent: *mut CssStylesheet, mut loader: Option<&mut Loader>) {
     loop {
         let mut url: *mut LwcString = ptr::null_mut();
-        if css_stylesheet_next_pending_import(parent, &mut url) != CSS_OK {
+        if css_stylesheet_next_pending_import(parent, &mut url) != CSS_OK || url.is_null() {
             return;
         }
-        let bytes = lwc_bytes(url).to_vec();
-        let child = create_empty_sheet(&bytes);
+        let url_text = String::from_utf8_lossy(lwc_bytes(url)).into_owned();
+        let child = match loader.as_deref_mut() {
+            Some(loader) => match loader.load(&url_text) {
+                Some(css) => parse_fetched_sheet(&css, &url_text, loader),
+                None => create_empty_sheet(url_text.as_bytes()),
+            },
+            None => create_empty_sheet(url_text.as_bytes()),
+        };
         check(
             css_stylesheet_register_import(parent, child),
             "css_stylesheet_register_import",
@@ -1270,7 +1305,31 @@ unsafe fn finish_imports(parent: *mut CssStylesheet) {
     }
 }
 
+/// Parse a fetched sheet, marking its URL as in progress while it is parsed so
+/// an `@import` cycle terminates instead of recursing forever.
+unsafe fn parse_fetched_sheet(
+    css: &str,
+    url: &str,
+    loader: &mut Loader,
+) -> *mut CssStylesheet {
+    if !loader.enter(url) {
+        return create_empty_sheet(url.as_bytes());
+    }
+    let sheet = parse_sheet_with_imports(css, url, false, Some(&mut *loader));
+    loader.exit(url);
+    sheet
+}
+
 unsafe fn parse_sheet(css: &str, url: &str, inline: bool) -> *mut CssStylesheet {
+    parse_sheet_with_imports(css, url, inline, None)
+}
+
+unsafe fn parse_sheet_with_imports(
+    css: &str,
+    url: &str,
+    inline: bool,
+    mut loader: Option<&mut Loader>,
+) -> *mut CssStylesheet {
     let url = CString::new(url).expect("stylesheet url");
     let mut params: CssStylesheetParams = mem::zeroed();
     params.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
@@ -1292,7 +1351,7 @@ unsafe fn parse_sheet(css: &str, url: &str, inline: bool) -> *mut CssStylesheet 
 
     let err = css_stylesheet_data_done(sheet);
     if err == CSS_IMPORTS_PENDING {
-        finish_imports(sheet);
+        finish_imports(sheet, loader.as_deref_mut());
     } else {
         check(err, "css_stylesheet_data_done");
     }
@@ -1484,8 +1543,394 @@ unsafe fn map_style(
 }
 
 // ---------------------------------------------------------------------------
-// Public entry points
+// External stylesheets (S2)
 // ---------------------------------------------------------------------------
+
+/// Default cap for one external stylesheet, before charset decoding.
+pub const MAX_SHEET_BYTES: usize = 2 * 1024 * 1024;
+
+/// Default total timeout for fetching one external stylesheet.
+pub const SHEET_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Caps applied to one external stylesheet.
+#[derive(Debug, Clone)]
+pub struct SheetLimits {
+    /// Largest accepted body. A larger sheet is skipped, never truncated.
+    pub max_bytes: usize,
+    /// Largest accepted transfer time for one sheet.
+    pub timeout: Duration,
+}
+
+impl Default for SheetLimits {
+    fn default() -> SheetLimits {
+        SheetLimits {
+            max_bytes: MAX_SHEET_BYTES,
+            timeout: SHEET_TIMEOUT,
+        }
+    }
+}
+
+/// One author stylesheet source, in document order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StylesheetRef {
+    /// A `<style>` block, with its CSS text.
+    Inline(String),
+    /// A `<link rel="stylesheet">` element.
+    External {
+        /// The `href` exactly as written; resolve it against the document base.
+        href: String,
+        /// The `media` attribute, when there is one.
+        media: Option<String>,
+    },
+}
+
+/// A stylesheet ready to be parsed: its CSS text plus the URL that relative
+/// references inside it resolve against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedStylesheet {
+    /// The sheet's URL after resolution. For an inline `<style>` this is the
+    /// document base, so `@import url(...)` resolves like a link.
+    pub url: String,
+    /// The CSS text.
+    pub css: String,
+}
+
+/// The author stylesheets of one run, plus the fetch cache behind them.
+///
+/// [`SheetSet::load`] fetches the top-level `<link>` sheets; `@import` chains
+/// are fetched while the styles are computed, because only libcss knows which
+/// imports a sheet really contains. After `compute_with_sheets`, [`fetched`]
+/// and [`warnings`] report the whole run.
+///
+/// [`fetched`]: SheetSet::fetched
+/// [`warnings`]: SheetSet::warnings
+pub struct SheetSet {
+    sheets: Vec<LoadedStylesheet>,
+    loader: Loader,
+}
+
+impl SheetSet {
+    /// Fetch the document's author stylesheets with the default limits.
+    pub fn load(doc: &Document, base: &str) -> SheetSet {
+        SheetSet::load_with_limits(doc, base, SheetLimits::default())
+    }
+
+    /// Fetch the document's author stylesheets with explicit limits.
+    ///
+    /// `base` is the URL relative references resolve against: the document's
+    /// final URL for http(s) pages, or its containing directory for local
+    /// files. A sheet that cannot be fetched is skipped with a warning on
+    /// stderr; the rest of the document still styles.
+    pub fn load_with_limits(doc: &Document, base: &str, limits: SheetLimits) -> SheetSet {
+        let mut set = SheetSet {
+            sheets: Vec::new(),
+            loader: Loader::new(limits),
+        };
+        for source in subresource_sheets(doc) {
+            match source {
+                StylesheetRef::Inline(css) => set.sheets.push(LoadedStylesheet {
+                    url: base.to_string(),
+                    css,
+                }),
+                StylesheetRef::External { href, media } => {
+                    if media
+                        .as_deref()
+                        .is_some_and(|media| !media_applies_to_screen(media))
+                    {
+                        continue;
+                    }
+                    let Some(url) = join_url(base, &href) else {
+                        set.loader.warn(format!(
+                            "skipping stylesheet {href:?}: cannot resolve it against {base:?}"
+                        ));
+                        continue;
+                    };
+                    if let Some(css) = set.loader.load(&url) {
+                        set.sheets.push(LoadedStylesheet { url, css });
+                    }
+                }
+            }
+        }
+        set
+    }
+
+    /// The sheets in document order: inline blocks and fetched external sheets
+    /// are interleaved exactly as the document declares them.
+    pub fn sheets(&self) -> &[LoadedStylesheet] {
+        &self.sheets
+    }
+
+    /// Non-fatal problems met while fetching (also printed on stderr).
+    pub fn warnings(&self) -> &[String] {
+        &self.loader.warnings
+    }
+
+    /// How many distinct URLs were fetched (cached URLs are not fetched twice).
+    pub fn fetched(&self) -> usize {
+        self.loader.fetched
+    }
+}
+
+/// The document's author stylesheet sources, in document order.
+pub fn subresource_sheets(doc: &Document) -> Vec<StylesheetRef> {
+    let mut out = Vec::new();
+    for (id, node) in doc.nodes.iter().enumerate() {
+        if node.is_text {
+            continue;
+        }
+        if node.tag.eq_ignore_ascii_case("style") {
+            let css = doc.text_content(id);
+            if !css.trim().is_empty() {
+                out.push(StylesheetRef::Inline(css));
+            }
+        } else if node.tag.eq_ignore_ascii_case("link") {
+            let rel = node.attr("rel").unwrap_or_default();
+            let is_sheet = rel
+                .split_whitespace()
+                .any(|token| token.eq_ignore_ascii_case("stylesheet"));
+            if !is_sheet {
+                continue;
+            }
+            if let Some(href) = node.attr("href") {
+                out.push(StylesheetRef::External {
+                    href: href.to_string(),
+                    media: node.attr("media").map(str::to_string),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Compute styles with the document's external stylesheets applied.
+///
+/// This is the fetch-aware entry point: `<link rel="stylesheet">` sheets and
+/// their `@import` chains are fetched (http(s) or local files) and cascaded at
+/// author origin in document order together with the inline `<style>` blocks.
+/// Failures degrade to a warning and never abort the render.
+pub fn compute_with_subresources(doc: &Document, base: &str, viewport_width: f64) -> Vec<Style> {
+    let mut set = SheetSet::load(doc, base);
+    compute_with_sheets(doc, &mut set, viewport_width)
+}
+
+/// Compute styles from an already loaded [`SheetSet`].
+///
+/// `@import` chains are fetched during this call, so read [`SheetSet::warnings`]
+/// and [`SheetSet::fetched`] afterwards to see the complete run.
+pub fn compute_with_sheets(
+    doc: &Document,
+    set: &mut SheetSet,
+    viewport_width: f64,
+) -> Vec<Style> {
+    let SheetSet { sheets, loader } = set;
+    let inputs: Vec<SheetInput> = sheets
+        .iter()
+        .map(|sheet| SheetInput {
+            url: &sheet.url,
+            css: &sheet.css,
+        })
+        .collect();
+    compute_inner(doc, &inputs, viewport_width, Some(loader))
+}
+
+// ---------------------------------------------------------------------------
+// Subresource fetching
+// ---------------------------------------------------------------------------
+
+/// One stylesheet to parse: its CSS and the URL its relative references
+/// resolve against.
+struct SheetInput<'a> {
+    url: &'a str,
+    css: &'a str,
+}
+
+/// Fetch cache and diagnostics for one run.
+///
+/// The cache is keyed by resolved URL, so two `<link>`s to the same sheet, or
+/// an import reached twice, cost one fetch. `active` breaks `@import` cycles.
+struct Loader {
+    limits: SheetLimits,
+    cache: HashMap<String, Option<String>>,
+    active: HashSet<String>,
+    fetched: usize,
+    warnings: Vec<String>,
+}
+
+impl Loader {
+    fn new(limits: SheetLimits) -> Loader {
+        Loader {
+            limits,
+            cache: HashMap::new(),
+            active: HashSet::new(),
+            fetched: 0,
+            warnings: Vec::new(),
+        }
+    }
+
+    fn warn(&mut self, message: String) {
+        eprintln!("browser-lite: {message}");
+        self.warnings.push(message);
+    }
+
+    /// Fetch `url` once per run. `None` means the sheet is unusable; the
+    /// failure is cached too, so a broken URL is not retried.
+    fn load(&mut self, url: &str) -> Option<String> {
+        if let Some(cached) = self.cache.get(url) {
+            return cached.clone();
+        }
+        self.fetched += 1;
+        let result = match fetch_sheet(url, &self.limits) {
+            Ok(css) => Some(css),
+            Err(err) => {
+                self.warn(format!("skipping stylesheet {url}: {err}"));
+                None
+            }
+        };
+        self.cache.insert(url.to_string(), result.clone());
+        result
+    }
+
+    /// Start parsing `url`, returning `false` when it is already being parsed
+    /// (an `@import` cycle).
+    fn enter(&mut self, url: &str) -> bool {
+        self.active.insert(url.to_string())
+    }
+
+    fn exit(&mut self, url: &str) {
+        self.active.remove(url);
+    }
+}
+
+/// Is a `media` attribute relevant to a screen render?
+///
+/// The engine only paints to a screen. The attribute is a media query list, and
+/// a list made up exclusively of other media types (typically `print`)
+/// contributes nothing. Queries without a type (`(min-width: 40em)`) target
+/// `all`; the conditions themselves are left to the sheet's own `@media` rules,
+/// because the engine does not pass per-sheet media conditions to libcss.
+fn media_applies_to_screen(media: &str) -> bool {
+    if media.trim().is_empty() {
+        return true;
+    }
+    media.split(',').any(|query| {
+        let mut words = query.split_whitespace();
+        let Some(first) = words.next() else {
+            return true;
+        };
+        let (negated, kind) = if first.eq_ignore_ascii_case("not") {
+            (true, words.next().unwrap_or(""))
+        } else if first.eq_ignore_ascii_case("only") {
+            (false, words.next().unwrap_or(""))
+        } else {
+            (false, first)
+        };
+        let matches = kind.is_empty()
+            || kind.starts_with('(')
+            || kind.eq_ignore_ascii_case("all")
+            || kind.eq_ignore_ascii_case("screen");
+        negated != matches
+    })
+}
+
+/// Resolve `rel` against `base`.
+///
+/// `base` is an absolute URL (http(s), file, or any other scheme) or a
+/// filesystem path. A path is a directory when it ends with a separator or
+/// names an existing directory; otherwise its parent directory is the base,
+/// which is what a stylesheet URL needs. Relative paths are normalised so the
+/// cache key is stable (`a/../b.css` and `b.css` are one URL).
+fn join_url(base: &str, rel: &str) -> Option<String> {
+    let rel = rel.trim();
+    if rel.is_empty() {
+        return None;
+    }
+    if Url::parse(rel).is_ok() {
+        return Some(rel.to_string());
+    }
+    if let Ok(base_url) = Url::parse(base) {
+        return base_url.join(rel).ok().map(|url| url.to_string());
+    }
+    if base.is_empty() {
+        return None;
+    }
+    let base_path = Path::new(base);
+    let dir = if base.ends_with('/') || base_path.is_dir() {
+        base_path.to_path_buf()
+    } else {
+        base_path
+            .parent()
+            .unwrap_or(base_path)
+            .to_path_buf()
+    };
+    let joined = if Path::new(rel).is_absolute() {
+        PathBuf::from(rel)
+    } else {
+        dir.join(rel)
+    };
+    Some(normalize_path(&joined).to_string_lossy().into_owned())
+}
+
+/// Lexical `.`/`..` removal, without touching the filesystem.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Fetch one stylesheet body, honouring the size cap and timeout.
+fn fetch_sheet(url: &str, limits: &SheetLimits) -> Result<String, String> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        let (bytes, content_type) =
+            crate::net::fetch_bytes_limited(url, limits.max_bytes, limits.timeout)?;
+        return crate::net::decode_body(&bytes, content_type.as_deref());
+    }
+    let path = local_path(url).ok_or_else(|| format!("unsupported stylesheet URL {url:?}"))?;
+    read_capped(&path, limits.max_bytes)
+}
+
+/// The filesystem path behind a stylesheet URL, if there is one.
+fn local_path(url: &str) -> Option<PathBuf> {
+    match Url::parse(url) {
+        Ok(parsed) if parsed.scheme() == "file" => parsed.to_file_path().ok(),
+        // Another scheme (data:, about:, ...): not a subresource we can read.
+        Ok(_) => None,
+        // Not a URL: a plain filesystem path.
+        Err(_) => Some(PathBuf::from(url)),
+    }
+}
+
+/// Read a file, rejecting (not truncating) anything over `max_bytes`.
+fn read_capped(path: &Path, max_bytes: usize) -> Result<String, String> {
+    let meta = std::fs::metadata(path).map_err(|err| err.to_string())?;
+    if meta.is_dir() {
+        return Err(String::from("is a directory"));
+    }
+    if meta.len() > max_bytes as u64 {
+        return Err(format!(
+            "{} bytes exceeds the {max_bytes} byte limit",
+            meta.len()
+        ));
+    }
+    let file = File::open(path).map_err(|err| err.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|err| err.to_string())?;
+    if bytes.len() > max_bytes {
+        return Err(format!("body exceeds the {max_bytes} byte limit"));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
 
 /// Collect the document's `<style>` sections, in document order.
 pub fn stylesheets(doc: &Document) -> Vec<String> {
@@ -1552,7 +1997,29 @@ fn is_root_element(doc: &Document, id: NodeId) -> bool {
 /// `sheets` are author stylesheets (see [`stylesheets`]). The embedded UA sheet
 /// is always applied at the UA origin, so author rules win. Text nodes and the
 /// synthetic `#document` node keep the engine defaults.
+///
+/// This path never fetches: external sheets are [`compute_with_subresources`].
 pub fn compute(doc: &Document, sheets: &[String], viewport_width: f64) -> Vec<Style> {
+    let urls: Vec<String> = (0..sheets.len())
+        .map(|i| format!("browser-lite://sheet/{i}"))
+        .collect();
+    let inputs: Vec<SheetInput> = sheets
+        .iter()
+        .zip(&urls)
+        .map(|(css, url)| SheetInput {
+            url,
+            css: css.as_str(),
+        })
+        .collect();
+    compute_inner(doc, &inputs, viewport_width, None)
+}
+
+fn compute_inner(
+    doc: &Document,
+    sheets: &[SheetInput<'_>],
+    viewport_width: f64,
+    mut loader: Option<&mut Loader>,
+) -> Vec<Style> {
     let viewport_width = viewport_width.max(1.0);
     // libwapcaplet interns strings in a process-wide dictionary with
     // non-atomic refcounts, so concurrent selection would race on them. The
@@ -1585,8 +2052,11 @@ pub fn compute(doc: &Document, sheets: &[String], viewport_width: f64) -> Vec<St
         );
         parsed.push(ua);
 
-        for (i, css) in sheets.iter().enumerate() {
-            let sheet = parse_sheet(css, &format!("browser-lite://sheet/{i}"), false);
+        for input in sheets {
+            let sheet = match loader.as_deref_mut() {
+                Some(loader) => parse_fetched_sheet(input.css, input.url, loader),
+                None => parse_sheet(input.css, input.url, false),
+            };
             check(
                 css_select_ctx_append_sheet(select_ctx, sheet, CSS_ORIGIN_AUTHOR, ptr::null()),
                 "css_select_ctx_append_sheet (author)",

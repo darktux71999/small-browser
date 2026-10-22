@@ -1,0 +1,9 @@
+@import url(sub-import-grandchild.css);
+
+.tie {
+  color: #ff0000;
+}
+
+.chain {
+  color: #0000ff;
+}

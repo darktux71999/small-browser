@@ -44,6 +44,26 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
     Ok(request(url)?.bytes)
 }
 
+/// Fetch a URL with a size cap and a total timeout.
+///
+/// A body larger than `max_bytes` is rejected, not truncated, so a caller can
+/// drop the whole resource instead of using half of it. Returns the body and
+/// the declared `Content-Type`, when the response carries one.
+pub fn fetch_bytes_limited(
+    url: &str,
+    max_bytes: usize,
+    timeout: Duration,
+) -> Result<(Vec<u8>, Option<String>), String> {
+    let limits = Limits {
+        // A connect phase can never outlive the whole request.
+        connect_timeout: CONNECT_TIMEOUT.min(timeout),
+        timeout,
+        max_bytes: Some(max_bytes),
+    };
+    let raw = request_inner(url, None, limits)?;
+    Ok((raw.bytes, raw.content_type))
+}
+
 /// Fetch a URL and return the body together with the URL it came from.
 pub fn fetch_result(url: &str) -> Result<FetchResult, String> {
     let raw = request(url)?;
@@ -57,6 +77,14 @@ pub fn fetch_result(url: &str) -> Result<FetchResult, String> {
 pub fn fetch_text(url: &str) -> Result<String, String> {
     let raw = request(url)?;
     decode_body(&raw.bytes, raw.content_type.as_deref())
+}
+
+/// Fetch a URL and return the decoded body plus the URL it finally came from
+/// (after redirects), so callers can resolve relative subresource URLs.
+pub fn fetch_text_result(url: &str) -> Result<(String, String), String> {
+    let raw = request(url)?;
+    let text = decode_body(&raw.bytes, raw.content_type.as_deref())?;
+    Ok((text, raw.final_url))
 }
 
 /// Fetch a URL on a worker thread. The result arrives over the channel.
@@ -112,11 +140,34 @@ struct Raw {
     set_cookies: Vec<(String, String)>,
 }
 
+/// Per-request limits: the page-fetch profile is [`DEFAULT_LIMITS`].
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    connect_timeout: Duration,
+    timeout: Duration,
+    /// `Some(n)` rejects bodies larger than `n` bytes instead of truncating.
+    max_bytes: Option<usize>,
+}
+
+const DEFAULT_LIMITS: Limits = Limits {
+    connect_timeout: CONNECT_TIMEOUT,
+    timeout: TIMEOUT,
+    max_bytes: None,
+};
+
 fn request(url: &str) -> Result<Raw, String> {
-    request_with(url, None)
+    request_inner(url, None, DEFAULT_LIMITS)
 }
 
 fn request_with(url: &str, cookie_header: Option<&str>) -> Result<Raw, String> {
+    request_inner(url, cookie_header, DEFAULT_LIMITS)
+}
+
+fn request_inner(
+    url: &str,
+    cookie_header: Option<&str>,
+    limits: Limits,
+) -> Result<Raw, String> {
     let mut easy = Easy::new();
     easy.url(url).map_err(|e| format!("invalid URL {url}: {e}"))?;
     easy.follow_location(true)
@@ -125,9 +176,9 @@ fn request_with(url: &str, cookie_header: Option<&str>) -> Result<Raw, String> {
         .map_err(|e| format!("redirects: {e}"))?;
     easy.useragent(USER_AGENT)
         .map_err(|e| format!("user agent: {e}"))?;
-    easy.connect_timeout(CONNECT_TIMEOUT)
+    easy.connect_timeout(limits.connect_timeout)
         .map_err(|e| format!("connect timeout: {e}"))?;
-    easy.timeout(TIMEOUT)
+    easy.timeout(limits.timeout)
         .map_err(|e| format!("timeout: {e}"))?;
     // Let libcurl negotiate and decode compressed responses.
     easy.accept_encoding("gzip, deflate")
@@ -142,16 +193,27 @@ fn request_with(url: &str, cookie_header: Option<&str>) -> Result<Raw, String> {
     }
 
     let mut body = Vec::new();
+    let mut too_large = false;
+    let max_bytes = limits.max_bytes;
     let mut status_line = String::new();
     let mut set_cookies: Vec<(String, String)> = Vec::new();
     // The URL of the response being read. A `Location` header points at the
     // next response, so it only becomes current when that response starts.
     let mut current_url = url.to_string();
     let mut next_url: Option<String> = None;
+    let performed;
     {
         let mut transfer = easy.transfer();
         transfer
             .write_function(|data| {
+                if let Some(max) = max_bytes {
+                    if body.len() + data.len() > max {
+                        // Reject the whole body: returning a short count aborts
+                        // the transfer without leaving truncated data behind.
+                        too_large = true;
+                        return Ok(0);
+                    }
+                }
                 body.extend_from_slice(data);
                 Ok(data.len())
             })
@@ -185,9 +247,16 @@ fn request_with(url: &str, cookie_header: Option<&str>) -> Result<Raw, String> {
                 true
             })
             .map_err(|e| format!("headers: {e}"))?;
-        transfer
-            .perform()
-            .map_err(|e| format!("request failed for {url}: {e}"))?;
+        performed = transfer.perform();
+    }
+    if let Err(err) = performed {
+        if too_large {
+            return Err(format!(
+                "{url}: response larger than {} bytes",
+                max_bytes.unwrap_or(0)
+            ));
+        }
+        return Err(format!("request failed for {url}: {err}"));
     }
 
     let code = easy.response_code().map_err(|e| format!("status: {e}"))?;
