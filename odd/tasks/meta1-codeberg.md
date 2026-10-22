@@ -120,3 +120,10 @@ sería bug de anchura de caja y se corrige ahí.
   3–9 siguen en 22–68% (meta <20%) y la altura queda lejos de 1901px. Causa
   medida: Codeberg compone sus columnas con **CSS grid** (`display:grid` +
   `grid-template` en homepage.css/index.css además de flex) — falta grid mínimo.
+- **L6** (2026-10-22): diferencial byte-a-byte de T6 (base pre-flex `HEAD~2` vs actual,
+  `--dump` sobre los 52 fixtures): **45 idénticos, 7 distintos, 0 regresiones**. Los 7
+  diffs son flex pedido: los 6 fixtures `flex-*` (la base no sabe hacer flex) y
+  `long.html`, que ya declaraba `display:flex; align-items:center;
+  justify-content:center` y cuyo texto ahora se centra exactamente donde su CSS manda
+  (antes salía arriba-izquierda porque el motor ignoraba flex). Risk de T6: none
+  (ninguna diferencia no pedida; 15 suites verdes incluidas las de preservación).
