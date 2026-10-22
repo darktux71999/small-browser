@@ -1,8 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use browser_lite::{css, dom, js, layout, paint, shell};
+use browser_lite::{css_libcss, dom, js, layout, paint, shell};
 use dom::{Document, NodeId};
+
+/// Layout width, also the viewport that `@media` is resolved against.
+const VIEWPORT_WIDTH: f64 = 1000.0;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -47,13 +50,8 @@ fn main() -> ExitCode {
         dump_dom(&doc);
     }
 
-    let mut sheet_source = String::new();
-    for style_id in doc.query_selector_all("style") {
-        sheet_source.push_str(&doc.text_content(style_id));
-        sheet_source.push('\n');
-    }
-    let sheet = css::Stylesheet::parse(&sheet_source);
-    let styles = css::compute(&doc, &sheet);
+    let sheets = css_libcss::stylesheets(&doc);
+    let styles = css_libcss::compute(&doc, &sheets, VIEWPORT_WIDTH);
 
     let title = doc
         .query_selector("title")
@@ -77,7 +75,7 @@ fn main() -> ExitCode {
         }
     }
 
-    let layout = layout::layout(&doc, &styles, 1000.0);
+    let layout = layout::layout(&doc, &styles, VIEWPORT_WIDTH);
 
     match png {
         Some(path) => {

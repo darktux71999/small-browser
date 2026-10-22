@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>css media</title>
+  <style>
+    .base { background: #ffffff; color: #000000; font-size: 14px; }
+    @media screen { .base { color: #0033cc; } }
+    @media print { .base { color: #cc0000; } }
+    @media (min-width: 700px) { .base { background: #ffffcc; font-size: 18px; } }
+    @media (max-width: 699px) { .base { background: #ccffcc; font-size: 12px; } }
+  </style>
+</head>
+<body>
+  <div class="base" id="base">media query target</div>
+</body>
+</html>

@@ -9,7 +9,7 @@ Navegador desktop ligero, desde cero, sobre el stack KISS ya instalado.
 | Lenguaje | Rust 1.99 (musl) | instalado |
 | JS engine | quickjs-ng 0.17 (`libqjs`) | instalado (paquete propio) |
 | HTML5 + DOM | lexbor 3.0.1 | instalado (paquete propio) |
-| CSS | parser subset propio + cascada | `src/css.rs` |
+| CSS | libcss 0.9.2 (NetSurf, MIT): parse + select + cascada | `src/css_libcss.rs`; `src/css.rs` legado |
 | Layout | block flow propio | `src/layout.rs` |
 | Paint | cairo 1.18.6 | sistema |
 | Ventana | SDL3 3.4.18 (FFI directo) | sistema |
@@ -22,11 +22,16 @@ acceso. Rust con FFI fino enlaza las librerías del sistema sin duplicarlas.
 
 ## Motor
 
-Motor propio sobre el stack KISS del sistema (lexbor + CSS subset + cairo + SDL3),
+Motor propio sobre el stack KISS del sistema (lexbor + libcss + cairo + SDL3),
 con QuickJS ejecutando los scripts sobre el DOM propio. El experimento con el
 motor Blitz (Stylo + Taffy + Vello) se retiró: costaba ~180MB por pestaña al
-traer el stack completo de un navegador moderno. La decisión de la capa de CSS
-se está midiendo en `spikes/css/` (ver `docs/api-comparativa.md`).
+traer el stack completo de un navegador moderno. La capa de CSS es libcss 0.9.2
+(NetSurf, MIT) mediante FFI fino: parse, selectores, especificidad, herencia y
+`@media` resueltas contra el ancho real del viewport, más una hoja UA mínima
+propia porque libcss no trae ninguna. `src/css.rs` queda como subset legado que
+usa el spike comparativo (`spikes/css/`). Las tres libs estáticas
+(`libcss`, `libparserutils`, `libwapcaplet`) se enlazan con `build.rs`; durante
+el desarrollo `CSS_LIB_PREFIX` apunta a un prefijo privado.
 
 ## Uso
 
@@ -41,7 +46,8 @@ cargo build
 
 ```
 src/dom.rs     árbol arena construido por lexbor + querySelector
-src/css.rs     parser CSS subset, especificidad y cascada
+src/css_libcss.rs  FFI libcss 0.9.2: parse, select, cascada, hoja UA, @media
+src/css.rs     subset CSS legado (lo usa el spike y sirve de referencia)
 src/layout.rs  block flow, wrapping de texto
 src/paint.rs   cairo -> ARGB / PNG
 src/shell.rs   ventana SDL3 (FFI)
@@ -54,13 +60,15 @@ depende de UI. Nada incluye `shell` hacia abajo.
 
 ## Estado
 
-Corte 1 completo en el motor propio: lexbor parsea HTML5, `css.rs` aplica el
-subset de CSS, `layout.rs` hace block flow y `paint.rs` pinta con cairo (PNG o
-ventana SDL3). QuickJS muta el DOM (`getElementById`, `createElement`,
-`appendChild`, `setAttribute`, `textContent`, `querySelector`) y hay eventos
-`addEventListener('click')` con bubbling. 7 tests verdes en el motor propio.
+Corte 1 completo en el motor propio: lexbor parsea HTML5, libcss calcula los
+estilos (hoja UA mínima incluida), `layout.rs` hace block flow y `paint.rs`
+pinta con cairo (PNG o ventana SDL3). QuickJS muta el DOM (`getElementById`,
+`createElement`, `appendChild`, `setAttribute`, `textContent`, `querySelector`)
+y hay eventos `addEventListener('click')` con bubbling. 7 tests verdes en el
+motor propio.
 
 Módulos de aplicación listos: `tabs` (pestañas + historial), `cookies`,
 `storage`, `net` (charset, redirecciones, async) y `sandbox` (seccomp +
-bubblewrap). Próximo corte: decidir la capa de CSS con el spike comparativo
-(`spikes/css/`, `docs/css-spike.md`), barra de pestañas visible y cookies/storage.
+bubblewrap). Próximo corte: migrar el texto a Pango (interlineado,
+justificación, tracking, `@font-face` vía fontconfig), reutilizando
+`spikes/css/src/render.rs` como referencia.

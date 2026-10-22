@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>css specificity</title>
+  <style>
+    div { color: #000000; background: #dddddd; margin: 8px; padding: 4px; font-size: 18px; }
+    .caja { color: #0000ff; background: #eeeeee; font-size: 20px; }
+    #destino { color: #cc0000; background: #ffcccc; margin: 12px; padding: 12px; font-size: 22px; }
+  </style>
+</head>
+<body>
+  <div class="caja" id="destino">specificity winner</div>
+  <div class="caja">class winner</div>
+  <div>tag only</div>
+</body>
+</html>

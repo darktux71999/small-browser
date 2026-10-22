@@ -180,6 +180,19 @@ pub enum Display {
     None,
 }
 
+/// Horizontal alignment of text inside a block.
+///
+/// The legacy cascade (`parse` + `compute` in this module) only records the
+/// centred case in `Style::inline_align`; libcss fills the full set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Color {
     pub r: f64,
@@ -204,6 +217,14 @@ pub struct Style {
     pub color: Color,
     pub background: Option<Color>,
     pub font_size: f64,
+    // Typography, populated by the libcss path. `bold` and `inline_align` stay
+    // for layout/paint compatibility and mirror weight >= 600 and centred text.
+    pub font_family: String,
+    pub font_weight: u32,
+    pub italic: bool,
+    pub line_height: f64,
+    pub text_align: TextAlign,
+    pub letter_spacing: f64,
     pub bold: bool,
     pub inline_align: bool,
 }
@@ -219,6 +240,12 @@ impl Default for Style {
             color: Color::BLACK,
             background: None,
             font_size: 16.0,
+            font_family: String::from("Sans"),
+            font_weight: 400,
+            italic: false,
+            line_height: 1.2,
+            text_align: TextAlign::Left,
+            letter_spacing: 0.0,
             bold: false,
             inline_align: false,
         }
