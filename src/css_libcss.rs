@@ -44,7 +44,10 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::css::{Color, Display, Style, TextAlign};
+use crate::css::{
+    AlignItems, Color, Display, FlexBasis, FlexDirection, FlexItem, FlexStyle, FlexWrap,
+    JustifyContent, Style, TextAlign,
+};
 use crate::dom::{Document, Node, NodeId};
 
 pub type CssError = c_int;
@@ -140,6 +143,48 @@ const CSS_TEXT_ALIGN_LIBCSS_RIGHT: u8 = 0x9;
 
 // css_letter_spacing_e (aliases css_column_gap_e)
 const CSS_LETTER_SPACING_SET: u8 = 0x1;
+
+// css_column_gap_e
+const CSS_COLUMN_GAP_SET: u8 = 0x1;
+
+// css_min_width_e / css_max_width_e
+const CSS_MIN_WIDTH_SET: u8 = 0x1;
+const CSS_MAX_WIDTH_SET: u8 = 0x1;
+
+// css_align_items_e
+const CSS_ALIGN_ITEMS_STRETCH: u8 = 0x1;
+const CSS_ALIGN_ITEMS_FLEX_START: u8 = 0x2;
+const CSS_ALIGN_ITEMS_FLEX_END: u8 = 0x3;
+const CSS_ALIGN_ITEMS_CENTER: u8 = 0x4;
+const CSS_ALIGN_ITEMS_BASELINE: u8 = 0x5;
+
+// css_flex_basis_e
+const CSS_FLEX_BASIS_SET: u8 = 0x1;
+const CSS_FLEX_BASIS_AUTO: u8 = 0x2;
+const CSS_FLEX_BASIS_CONTENT: u8 = 0x3;
+
+// css_flex_direction_e
+const CSS_FLEX_DIRECTION_ROW: u8 = 0x1;
+const CSS_FLEX_DIRECTION_ROW_REVERSE: u8 = 0x2;
+const CSS_FLEX_DIRECTION_COLUMN: u8 = 0x3;
+const CSS_FLEX_DIRECTION_COLUMN_REVERSE: u8 = 0x4;
+
+// css_flex_grow_e / css_flex_shrink_e
+const CSS_FLEX_GROW_SET: u8 = 0x1;
+const CSS_FLEX_SHRINK_SET: u8 = 0x1;
+
+// css_flex_wrap_e
+const CSS_FLEX_WRAP_NOWRAP: u8 = 0x1;
+const CSS_FLEX_WRAP_WRAP: u8 = 0x2;
+const CSS_FLEX_WRAP_WRAP_REVERSE: u8 = 0x3;
+
+// css_justify_content_e
+const CSS_JUSTIFY_CONTENT_FLEX_START: u8 = 0x1;
+const CSS_JUSTIFY_CONTENT_FLEX_END: u8 = 0x2;
+const CSS_JUSTIFY_CONTENT_CENTER: u8 = 0x3;
+const CSS_JUSTIFY_CONTENT_SPACE_BETWEEN: u8 = 0x4;
+const CSS_JUSTIFY_CONTENT_SPACE_AROUND: u8 = 0x5;
+const CSS_JUSTIFY_CONTENT_SPACE_EVENLY: u8 = 0x6;
 
 // css_unit
 const CSS_UNIT_PCT: CssUnit = 0x15;
@@ -583,6 +628,32 @@ extern "C" {
         length: *mut CssFixed,
         unit: *mut CssUnit,
     ) -> u8;
+    fn css_computed_min_width(
+        style: *const CssComputedStyle,
+        length: *mut CssFixed,
+        unit: *mut CssUnit,
+    ) -> u8;
+    fn css_computed_max_width(
+        style: *const CssComputedStyle,
+        length: *mut CssFixed,
+        unit: *mut CssUnit,
+    ) -> u8;
+    fn css_computed_column_gap(
+        style: *const CssComputedStyle,
+        length: *mut CssFixed,
+        unit: *mut CssUnit,
+    ) -> u8;
+    fn css_computed_align_items(style: *const CssComputedStyle) -> u8;
+    fn css_computed_flex_basis(
+        style: *const CssComputedStyle,
+        length: *mut CssFixed,
+        unit: *mut CssUnit,
+    ) -> u8;
+    fn css_computed_flex_direction(style: *const CssComputedStyle) -> u8;
+    fn css_computed_flex_grow(style: *const CssComputedStyle, number: *mut CssFixed) -> u8;
+    fn css_computed_flex_shrink(style: *const CssComputedStyle, number: *mut CssFixed) -> u8;
+    fn css_computed_flex_wrap(style: *const CssComputedStyle) -> u8;
+    fn css_computed_justify_content(style: *const CssComputedStyle) -> u8;
 }
 
 #[link(name = "wapcaplet")]
@@ -1330,6 +1401,14 @@ unsafe fn parse_sheet_with_imports(
     inline: bool,
     mut loader: Option<&mut Loader>,
 ) -> *mut CssStylesheet {
+    // libcss knows `column-gap` but neither the `gap` shorthand nor
+    // `row-gap`, so the gaps are rewritten into the carriers the engine
+    // reads them from before the sheet is parsed.
+    let rewritten = if inline {
+        rewrite_gap_declarations(css)
+    } else {
+        rewrite_gap_carriers(css)
+    };
     let url = CString::new(url).expect("stylesheet url");
     let mut params: CssStylesheetParams = mem::zeroed();
     params.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
@@ -1343,7 +1422,7 @@ unsafe fn parse_sheet_with_imports(
     let mut sheet: *mut CssStylesheet = ptr::null_mut();
     check(css_stylesheet_create(&params, &mut sheet), "css_stylesheet_create");
 
-    let mut err = css_stylesheet_append_data(sheet, css.as_ptr(), css.len());
+    let mut err = css_stylesheet_append_data(sheet, rewritten.as_ptr(), rewritten.len());
     if err == CSS_NEEDDATA {
         err = CSS_OK;
     }
@@ -1356,6 +1435,310 @@ unsafe fn parse_sheet_with_imports(
         check(err, "css_stylesheet_data_done");
     }
     sheet
+}
+
+// ---------------------------------------------------------------------------
+// Gap carriers (S7)
+// ---------------------------------------------------------------------------
+
+/// Rewrites the gap declarations of a stylesheet so that the engine can read
+/// them, and drops the author's own `min-width`/`max-width`.
+///
+/// libcss 0.9.2 knows `column-gap` but neither the `gap` shorthand nor
+/// `row-gap`, so the gaps of a real page would be lost. The engine reads the
+/// row gap from `min-width` and the column gap from `max-width`: both are
+/// non-inherited lengths that no other part of the engine looks at, so the
+/// author's own minimum/maximum widths (which the engine ignores anyway) are
+/// dropped to leave the carriers free.
+///
+/// The rest of the stylesheet is copied verbatim.
+fn rewrite_gap_carriers(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    rewrite_rule_list(css, &mut out);
+    out
+}
+
+/// The same rewrite for a declaration list: the `style=""` attribute.
+fn rewrite_gap_declarations(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    rewrite_declarations(css, &mut out);
+    out
+}
+
+/// Copies a rule list, rewriting the declaration blocks it contains.
+fn rewrite_rule_list(src: &str, out: &mut String) {
+    let bytes = src.as_bytes();
+    let mut i = 0usize;
+    'rules: while i < bytes.len() {
+        let trivia = i;
+        i = skip_trivia(bytes, i);
+        out.push_str(&src[trivia..i]);
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == b'}' {
+            // A stray closing brace: copy it and leave this block.
+            out.push('}');
+            i += 1;
+            continue;
+        }
+
+        // The prelude of the rule (or of the at-rule) ends at the first
+        // top-level `{` or `;`.
+        let mut j = i;
+        let block_start;
+        loop {
+            if j >= bytes.len() {
+                out.push_str(&src[i..]);
+                return;
+            }
+            match bytes[j] {
+                b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => {
+                    j = skip_comment(bytes, j);
+                    continue;
+                }
+                b'"' | b'\'' => {
+                    j = skip_string(bytes, j);
+                    continue;
+                }
+                b'{' => {
+                    block_start = j;
+                    break;
+                }
+                b';' => {
+                    // An at-rule without a block (`@import`, `@charset`):
+                    // copy it verbatim.
+                    out.push_str(&src[i..=j]);
+                    i = j + 1;
+                    continue 'rules;
+                }
+                b'}' => {
+                    out.push_str(&src[i..j]);
+                    i = j;
+                    continue 'rules;
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+
+        let block_end = find_block_end(bytes, block_start);
+        let prelude = &src[i..block_start];
+        let body = &src[block_start + 1..block_end];
+        out.push_str(prelude);
+        out.push('{');
+        if at_rule_holds_rules(prelude) {
+            rewrite_rule_list(body, out);
+        } else {
+            rewrite_declarations(body, out);
+        }
+        out.push('}');
+        i = block_end + 1;
+    }
+}
+
+/// Does this block hold a rule list instead of a declaration list?
+///
+/// A style rule always holds declarations; an at-rule holds rules when it
+/// groups other rules (`@media`, `@supports`, `@keyframes`, ...).
+fn at_rule_holds_rules(prelude: &str) -> bool {
+    let trimmed = prelude.trim_start();
+    if !trimmed.starts_with('@') {
+        return false;
+    }
+    let name: String = trimmed[1..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect::<String>()
+        .to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "media" | "supports" | "layer" | "container" | "document" | "scope"
+    ) || name.ends_with("-keyframes")
+}
+
+/// Copies a declaration list, rewriting the gap declarations.
+fn rewrite_declarations(src: &str, out: &mut String) {
+    let bytes = src.as_bytes();
+    let mut segment = 0usize;
+    let mut j = 0usize;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => {
+                j = skip_comment(bytes, j);
+                continue;
+            }
+            b'"' | b'\'' => {
+                j = skip_string(bytes, j);
+                continue;
+            }
+            b';' => {
+                rewrite_declaration(&src[segment..j], out);
+                out.push(';');
+                j += 1;
+                segment = j;
+                continue;
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    rewrite_declaration(&src[segment..], out);
+}
+
+/// Rewrites one declaration: the gap properties become the carriers and the
+/// author's minimum/maximum widths are dropped.
+fn rewrite_declaration(decl: &str, out: &mut String) {
+    let Some((property, value)) = split_declaration(decl) else {
+        out.push_str(decl);
+        return;
+    };
+    match property.trim().to_ascii_lowercase().as_str() {
+        "gap" | "row-gap" | "column-gap" => {
+            let name = property.trim().to_ascii_lowercase();
+            let (value, important) = split_important(value);
+            let parts: Vec<&str> = value.split_whitespace().collect();
+            // `gap: <row> <column>`; the longhands only own their own axis.
+            let (row, column) = match (name.as_str(), parts.as_slice()) {
+                ("row-gap", [one]) => (Some(*one), None),
+                ("column-gap", [one]) => (None, Some(*one)),
+                (_, [one]) => (Some(*one), Some(*one)),
+                (_, [row, column]) => (Some(*row), Some(*column)),
+                _ => (None, None),
+            };
+            if let Some(row) = row {
+                write_carrier(out, "min-width", row, important);
+                if column.is_some() {
+                    out.push(';');
+                }
+            }
+            if let Some(column) = column {
+                write_carrier(out, "max-width", column, important);
+            }
+        }
+        // The engine has no minimum/maximum sizing: these declarations are
+        // inert, and the carriers need the room.
+        "min-width" | "max-width" => {}
+        _ => out.push_str(decl),
+    }
+}
+
+/// Writes one carrier declaration.
+fn write_carrier(out: &mut String, property: &str, value: &str, important: bool) {
+    out.push_str(property);
+    out.push(':');
+    out.push_str(value);
+    if important {
+        out.push_str("!important");
+    }
+}
+
+/// Splits a declaration into its property and its value at the first top-level
+/// `:`.
+fn split_declaration(decl: &str) -> Option<(&str, &str)> {
+    let bytes = decl.as_bytes();
+    let mut j = 0usize;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => {
+                j = skip_comment(bytes, j);
+                continue;
+            }
+            b'"' | b'\'' => {
+                j = skip_string(bytes, j);
+                continue;
+            }
+            b':' => return Some((&decl[..j], &decl[j + 1..])),
+            _ => {}
+        }
+        j += 1;
+    }
+    None
+}
+
+/// Splits the `!important` flag off a declaration value.
+fn split_important(value: &str) -> (&str, bool) {
+    let trimmed = value.trim();
+    if trimmed.len() >= 10 && trimmed[trimmed.len() - 10..].eq_ignore_ascii_case("!important") {
+        (trimmed[..trimmed.len() - 10].trim(), true)
+    } else {
+        (trimmed, false)
+    }
+}
+
+/// The index just after the string that starts at `i`.
+fn skip_string(bytes: &[u8], i: usize) -> usize {
+    let quote = bytes[i];
+    let mut j = i + 1;
+    while j < bytes.len() {
+        if bytes[j] == b'\\' {
+            j += 2;
+            continue;
+        }
+        if bytes[j] == b'\n' {
+            return j;
+        }
+        if bytes[j] == quote {
+            return j + 1;
+        }
+        j += 1;
+    }
+    j
+}
+
+/// The index just after the comment that starts at `i`.
+fn skip_comment(bytes: &[u8], i: usize) -> usize {
+    let mut j = i + 2;
+    while j + 1 < bytes.len() {
+        if bytes[j] == b'*' && bytes[j + 1] == b'/' {
+            return j + 2;
+        }
+        j += 1;
+    }
+    bytes.len()
+}
+
+/// Skips whitespace and comments.
+fn skip_trivia(bytes: &[u8], i: usize) -> usize {
+    let mut j = i;
+    loop {
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j + 1 < bytes.len() && bytes[j] == b'/' && bytes[j + 1] == b'*' {
+            j = skip_comment(bytes, j);
+            continue;
+        }
+        return j;
+    }
+}
+
+/// The index of the `}` that closes the block opened at `i`.
+fn find_block_end(bytes: &[u8], i: usize) -> usize {
+    let mut depth = 0usize;
+    let mut j = i;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => {
+                j = skip_comment(bytes, j);
+                continue;
+            }
+            b'"' | b'\'' => {
+                j = skip_string(bytes, j);
+                continue;
+            }
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return j;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    bytes.len()
 }
 
 // ---------------------------------------------------------------------------
@@ -1393,6 +1776,91 @@ unsafe fn length_px(
     Some(fixed_to_f64(css_unit_len2css_px(style, unit_ctx, len, unit)))
 }
 
+/// The flex container properties of a computed style.
+///
+/// The gap values do not come from libcss: it knows `column-gap` but not the
+/// `gap` shorthand nor `row-gap`, so the stylesheet is rewritten before it is
+/// parsed and the gaps travel in `min-width` (row gap) and `max-width`
+/// (column gap). See [`rewrite_gap_carriers`].
+unsafe fn flex_style(style: *const CssComputedStyle, unit_ctx: &CssUnitCtx) -> FlexStyle {
+    FlexStyle {
+        direction: match css_computed_flex_direction(style) {
+            CSS_FLEX_DIRECTION_COLUMN | CSS_FLEX_DIRECTION_COLUMN_REVERSE => FlexDirection::Column,
+            // `row-reverse` is not part of the minimal flexbox: it lays out
+            // like `row`.
+            CSS_FLEX_DIRECTION_ROW | CSS_FLEX_DIRECTION_ROW_REVERSE => FlexDirection::Row,
+            _ => FlexDirection::Row,
+        },
+        wrap: match css_computed_flex_wrap(style) {
+            CSS_FLEX_WRAP_WRAP | CSS_FLEX_WRAP_WRAP_REVERSE => FlexWrap::Wrap,
+            CSS_FLEX_WRAP_NOWRAP => FlexWrap::NoWrap,
+            _ => FlexWrap::NoWrap,
+        },
+        justify: match css_computed_justify_content(style) {
+            CSS_JUSTIFY_CONTENT_CENTER => JustifyContent::Center,
+            CSS_JUSTIFY_CONTENT_FLEX_END => JustifyContent::FlexEnd,
+            CSS_JUSTIFY_CONTENT_SPACE_BETWEEN => JustifyContent::SpaceBetween,
+            CSS_JUSTIFY_CONTENT_SPACE_AROUND => JustifyContent::SpaceAround,
+            CSS_JUSTIFY_CONTENT_SPACE_EVENLY => JustifyContent::SpaceEvenly,
+            CSS_JUSTIFY_CONTENT_FLEX_START => JustifyContent::FlexStart,
+            _ => JustifyContent::FlexStart,
+        },
+        align: match css_computed_align_items(style) {
+            CSS_ALIGN_ITEMS_FLEX_START => AlignItems::FlexStart,
+            CSS_ALIGN_ITEMS_CENTER => AlignItems::Center,
+            CSS_ALIGN_ITEMS_FLEX_END => AlignItems::FlexEnd,
+            // `baseline` is not part of the minimal flexbox.
+            CSS_ALIGN_ITEMS_BASELINE => AlignItems::FlexStart,
+            CSS_ALIGN_ITEMS_STRETCH => AlignItems::Stretch,
+            _ => AlignItems::Stretch,
+        },
+        row_gap: length_px(style, unit_ctx, css_computed_min_width, CSS_MIN_WIDTH_SET)
+            .unwrap_or(0.0),
+        // The carrier holds the column gap; libcss' own `column-gap` is the
+        // fallback for the declarations the rewrite did not reach.
+        column_gap: length_px(style, unit_ctx, css_computed_max_width, CSS_MAX_WIDTH_SET)
+            .or_else(|| length_px(style, unit_ctx, css_computed_column_gap, CSS_COLUMN_GAP_SET))
+            .unwrap_or(0.0),
+    }
+}
+
+/// The flex item properties of a computed style: `flex-grow`, `flex-shrink`
+/// and `flex-basis`.
+unsafe fn flex_item(style: *const CssComputedStyle, unit_ctx: &CssUnitCtx) -> FlexItem {
+    let mut number: CssFixed = 0;
+    let grow = if css_computed_flex_grow(style, &mut number) == CSS_FLEX_GROW_SET {
+        fixed_to_f64(number)
+    } else {
+        0.0
+    };
+    let shrink = if css_computed_flex_shrink(style, &mut number) == CSS_FLEX_SHRINK_SET {
+        fixed_to_f64(number)
+    } else {
+        1.0
+    };
+
+    let mut len: CssFixed = 0;
+    let mut unit: CssUnit = 0;
+    let basis = match css_computed_flex_basis(style, &mut len, &mut unit) {
+        CSS_FLEX_BASIS_SET => {
+            if unit == CSS_UNIT_PCT {
+                FlexBasis::Percent(fixed_to_f64(len))
+            } else {
+                FlexBasis::Px(fixed_to_f64(css_unit_len2css_px(style, unit_ctx, len, unit)))
+            }
+        }
+        CSS_FLEX_BASIS_CONTENT => FlexBasis::Content,
+        CSS_FLEX_BASIS_AUTO => FlexBasis::Auto,
+        _ => FlexBasis::Auto,
+    };
+
+    FlexItem {
+        grow,
+        shrink,
+        basis,
+    }
+}
+
 unsafe fn map_style(
     style: *const CssComputedStyle,
     unit_ctx: &CssUnitCtx,
@@ -1400,14 +1868,19 @@ unsafe fn map_style(
 ) -> Style {
     let mut out = Style::default();
 
-    out.display = match css_computed_display(style, is_root) {
+    let display = css_computed_display(style, is_root);
+    out.display = match display {
         CSS_DISPLAY_NONE => Display::None,
         CSS_DISPLAY_BLOCK
         | CSS_DISPLAY_LIST_ITEM
         | CSS_DISPLAY_TABLE
-        | CSS_DISPLAY_FLEX
         | CSS_DISPLAY_GRID => Display::Block,
-        // The block flow engine has no inline-block/inline-table/flex layout.
+        // A flex container is a block-level box: the engine has no
+        // `Display::Flex` variant (the CSS spike matches `Display`
+        // exhaustively), so the container keeps `Display::Block` and carries
+        // its flex properties in `Style::flex`.
+        CSS_DISPLAY_FLEX | CSS_DISPLAY_INLINE_FLEX => Display::Block,
+        // The block flow engine has no inline-block/inline-table/grid layout.
         // Inline-level displays stay inline runs, matching the legacy cascade's
         // mapping (only block/list-item/table/flex/grid become block boxes).
         CSS_DISPLAY_INLINE
@@ -1422,11 +1895,15 @@ unsafe fn map_style(
         | CSS_DISPLAY_TABLE_COLUMN
         | CSS_DISPLAY_TABLE_CELL
         | CSS_DISPLAY_TABLE_CAPTION
-        | CSS_DISPLAY_INLINE_FLEX
         | CSS_DISPLAY_INLINE_GRID => Display::Inline,
         // CSS_DISPLAY_INHERIT is resolved by compose before mapping.
         _ => Display::Inline,
     };
+
+    if matches!(display, CSS_DISPLAY_FLEX | CSS_DISPLAY_INLINE_FLEX) {
+        out.flex = Some(flex_style(style, unit_ctx));
+    }
+    out.flex_item = flex_item(style, unit_ctx);
 
     out.width = length_px(style, unit_ctx, css_computed_width, CSS_WIDTH_SET);
     out.height = length_px(style, unit_ctx, css_computed_height, CSS_HEIGHT_SET);

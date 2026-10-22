@@ -1,15 +1,21 @@
-//! Block-flow layout for the MVP subset.
+//! Block-flow and flex layout for the MVP subset.
 //! Produces absolute boxes consumed by both the PNG painter and `--dump`.
 //!
 //! Text is measured, wrapped, aligned and justified by Pango: the run is laid
 //! out once with the real font metrics inside the content box, and the same
 //! layout is rebuilt at paint time from [`TextRun`]. Nothing here estimates
 //! advances from the character count.
+//!
+//! A box whose computed `display` is `flex` opens a flex formatting context
+//! ([`layout_flex_container`]): its children become flex items laid out along
+//! the main axis instead of stacking in the block flow.
 
 use std::os::raw::{c_int, c_void};
 use std::rc::Rc;
 
-use crate::css::{Display, Style};
+use crate::css::{
+    AlignItems, Display, FlexBasis, FlexDirection, JustifyContent, Style,
+};
 use crate::dom::{Document, NodeId};
 use crate::img::{Image, ImageSet};
 
@@ -49,6 +55,20 @@ pub struct Layout {
     pub runs: Vec<TextRun>,
     pub width: f64,
     pub height: f64,
+}
+
+/// The size the layout dictates for a box, overriding what the cascade would
+/// give it.
+#[derive(Clone, Copy, Default)]
+struct Forced {
+    /// The border-box width.
+    width: Option<f64>,
+    /// The border-box height. It is a minimum: the content of the box may
+    /// still overflow it (the engine has no overflow handling).
+    height: Option<f64>,
+    /// Lay the box out as a block even when its display is inline. A flex
+    /// item is blockified.
+    blockify: bool,
 }
 
 pub fn layout(doc: &Document, styles: &[Style], viewport_width: f64) -> Layout {
@@ -94,6 +114,7 @@ pub fn layout_with_images(
             0.0,
             cursor,
             viewport_width,
+            Forced::default(),
             &shaper,
             images,
             &mut boxes,
@@ -116,6 +137,7 @@ fn layout_node(
     origin_x: f64,
     origin_y: f64,
     available_width: f64,
+    forced: Forced,
     shaper: &TextShaper,
     images: &ImageSet,
     out: &mut Vec<LayoutBox>,
@@ -126,13 +148,28 @@ fn layout_node(
         return 0.0;
     }
     if is_image(doc, id) {
-        return layout_image(doc, styles, id, origin_x, origin_y, available_width, images, out);
+        return layout_image(
+            doc,
+            styles,
+            id,
+            origin_x,
+            origin_y,
+            available_width,
+            forced,
+            images,
+            out,
+        );
     }
-    if style.display == Display::Inline {
+    if style.display == Display::Inline && !forced.blockify {
         return 0.0; // inline runs are flushed by their block container
     }
+    if style.flex.is_some() {
+        return layout_flex_container(
+            doc, styles, id, origin_x, origin_y, available_width, shaper, images, out, runs,
+        );
+    }
 
-    let content = content_box(style, origin_x, available_width);
+    let content = content_box(style, origin_x, origin_y, available_width, forced);
     let border_x = content.border_x;
     let border_w = content.border_w;
     let content_x = content.x;
@@ -174,7 +211,17 @@ fn layout_node(
                 }
                 run.clear();
                 cursor_y += layout_node(
-                    doc, styles, child, content_x, cursor_y, content_w, shaper, images, out, runs,
+                    doc,
+                    styles,
+                    child,
+                    content_x,
+                    cursor_y,
+                    content_w,
+                    Forced::default(),
+                    shaper,
+                    images,
+                    out,
+                    runs,
                 );
             }
             Display::Block => {
@@ -185,7 +232,17 @@ fn layout_node(
                 }
                 run.clear();
                 cursor_y += layout_node(
-                    doc, styles, child, content_x, cursor_y, content_w, shaper, images, out, runs,
+                    doc,
+                    styles,
+                    child,
+                    content_x,
+                    cursor_y,
+                    content_w,
+                    Forced::default(),
+                    shaper,
+                    images,
+                    out,
+                    runs,
                 );
             }
             Display::Inline => collect_inline_text(doc, child, &mut run),
@@ -200,6 +257,9 @@ fn layout_node(
     if let Some(h) = style.height {
         border_h = border_h.max(h);
     }
+    if let Some(h) = forced.height {
+        border_h = border_h.max(h);
+    }
     out[box_index].h = border_h.max(0.0);
 
     border_h + style.margin[0] + style.margin[2]
@@ -212,24 +272,709 @@ struct ContentBox {
     border_x: f64,
     /// Width of the border box.
     border_w: f64,
+    /// Top edge of the content box.
+    y: f64,
     /// Left edge of the content box.
     x: f64,
     /// Width of the content box.
     w: f64,
 }
 
-fn content_box(style: &Style, origin_x: f64, available_width: f64) -> ContentBox {
+fn content_box(
+    style: &Style,
+    origin_x: f64,
+    origin_y: f64,
+    available_width: f64,
+    forced: Forced,
+) -> ContentBox {
     let border_x = origin_x + style.margin[3];
-    let border_w = style
-        .width
-        .map(|w| w + style.padding[1] + style.padding[3])
-        .unwrap_or((available_width - style.margin[1] - style.margin[3]).max(1.0));
+    let border_w = match forced.width {
+        // The flex algorithm decides the main size of an item; the cascade
+        // does not get a say.
+        Some(w) => w,
+        None => style
+            .width
+            .map(|w| w + style.padding[1] + style.padding[3])
+            .unwrap_or((available_width - style.margin[1] - style.margin[3]).max(1.0)),
+    };
     ContentBox {
         border_x,
         border_w,
+        y: origin_y + style.margin[0] + style.padding[0],
         x: border_x + style.padding[3],
         w: (border_w - style.padding[1] - style.padding[3]).max(1.0),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Flex layout (S7)
+// ---------------------------------------------------------------------------
+
+/// One flex item: a child of a flex container.
+struct FlexItemBox {
+    /// The DOM node of the item. `usize::MAX` marks an anonymous item built
+    /// from the inline content of the container.
+    node: NodeId,
+    /// The text of an anonymous item.
+    text: Option<String>,
+    /// The item's own style.
+    style: Style,
+    /// The flex base size: the content-box size along the main axis.
+    base: f64,
+    /// The final content-box size along the main axis.
+    main: f64,
+    /// The content-box size along the cross axis.
+    cross: f64,
+    /// The border-box origin of the item.
+    x: f64,
+    y: f64,
+}
+
+/// Lays out a flex container: its children become flex items laid out along
+/// the main axis of the container instead of stacking in the block flow.
+///
+/// The algorithm follows the flexbox specification: the base sizes come from
+/// `flex-basis` (or from the content), the free space is shared with
+/// `flex-grow`/`flex-shrink`, `justify-content` places the items along the
+/// main axis and `align-items` places them across the cross axis.
+#[allow(clippy::too_many_arguments)]
+fn layout_flex_container(
+    doc: &Document,
+    styles: &[Style],
+    id: NodeId,
+    origin_x: f64,
+    origin_y: f64,
+    available_width: f64,
+    shaper: &TextShaper,
+    images: &ImageSet,
+    out: &mut Vec<LayoutBox>,
+    runs: &mut Vec<TextRun>,
+) -> f64 {
+    let style = &styles[id];
+    let flex = style.flex.unwrap_or_default();
+    let row = flex.direction == FlexDirection::Row;
+
+    let content = content_box(style, origin_x, origin_y, available_width, Forced::default());
+    let border_y = origin_y + style.margin[0];
+
+    let box_index = out.len();
+    out.push(LayoutBox {
+        node: id,
+        tag: doc.nodes[id].tag.clone(),
+        x: content.border_x,
+        y: border_y,
+        w: content.border_w,
+        h: 0.0,
+        text: None,
+        color: style.color,
+        background: style.background,
+        font_size: style.font_size,
+        bold: style.bold,
+        centered: style.inline_align,
+        image: None,
+    });
+
+    // The inner main size of the container: the width of a row container, the
+    // height of a column one (definite only when the author set it).
+    let main_avail = if row {
+        content.w
+    } else {
+        definite_inner_height(style).unwrap_or(f64::INFINITY)
+    };
+    // The inner cross size: the height of a row container, the width of a
+    // column one.
+    let cross_avail = if row {
+        definite_inner_height(style).unwrap_or(f64::INFINITY)
+    } else {
+        content.w
+    };
+
+    let mut items = collect_flex_items(doc, styles, id);
+    if items.is_empty() {
+        let height = style.height.unwrap_or(0.0).max(0.0);
+        out[box_index].h = height;
+        return height + style.margin[0] + style.margin[2];
+    }
+
+    // The gap between the items of a line and the gap between the lines.
+    let main_gap = if row { flex.column_gap } else { flex.row_gap };
+    let cross_gap = if row { flex.row_gap } else { flex.column_gap };
+
+    // 1. The cross size of the items of a column container: their width, which
+    //    the base size (their height) depends on.
+    if !row {
+        for item in &mut items {
+            item.cross = column_item_width(doc, styles, item, cross_avail, shaper, images);
+        }
+    }
+
+    // 2. The flex base size of every item.
+    for item in &mut items {
+        item.base = flex_base_size(
+            doc, styles, item, row, main_avail, shaper, images,
+        );
+        item.main = item.base;
+    }
+
+    // 3. The items are collected into lines: a line breaks when the next item
+    //    does not fit in the main size of the container.
+    let lines = flex_lines(&items, row, main_avail, main_gap);
+
+    // 4. The flexible lengths: the free space of every line is shared with the
+    //    grow factors, or taken back with the shrink factors.
+    for &(start, count) in &lines {
+        let used = line_main_size(&items[start..start + count], row, main_gap);
+        let free = if main_avail.is_finite() {
+            main_avail - used
+        } else {
+            0.0
+        };
+        if free > 0.0 {
+            let grow: f64 = items[start..start + count]
+                .iter()
+                .map(|item| item.style.flex_item.grow)
+                .sum();
+            if grow > 0.0 {
+                for item in &mut items[start..start + count] {
+                    item.main += free * item.style.flex_item.grow / grow;
+                }
+            }
+        } else if free < 0.0 {
+            // The shrink factors are weighted with the base size.
+            let shrink: f64 = items[start..start + count]
+                .iter()
+                .map(|item| item.style.flex_item.shrink * item.base)
+                .sum();
+            if shrink > 0.0 {
+                for item in &mut items[start..start + count] {
+                    let weight = item.style.flex_item.shrink * item.base;
+                    item.main += free * weight / shrink;
+                }
+            }
+        }
+        for item in &mut items[start..start + count] {
+            item.main = item.main.max(0.0);
+        }
+    }
+
+    // 5. The cross size of the items of a row container: their height, at the
+    //    width the flex algorithm gave them.
+    if row {
+        for item in &mut items {
+            item.cross = measure_item_height(doc, styles, item, row, item.main, shaper, images);
+        }
+    }
+
+    // 6. The cross size of every line.
+    let mut line_cross: Vec<f64> = Vec::with_capacity(lines.len());
+    for &(start, count) in &lines {
+        let mut cross = 0.0f64;
+        for item in &items[start..start + count] {
+            let (p_start, p_end) = cross_padding(&item.style, row);
+            let (m_start, m_end) = cross_margins(&item.style, row);
+            cross = cross.max(item.cross + p_start + p_end + m_start + m_end);
+        }
+        // A container with a definite cross size gives that size to its lines.
+        if cross_avail.is_finite() {
+            cross = cross_avail;
+        }
+        line_cross.push(cross);
+    }
+
+    // 7. The items are placed along the main axis and across the cross axis.
+    let mut cross_pos = if row { content.y } else { content.x };
+    for (index, &(start, count)) in lines.iter().enumerate() {
+        let line_size = line_cross[index];
+        let used = line_main_size(&items[start..start + count], row, main_gap);
+        let free = if main_avail.is_finite() {
+            main_avail - used
+        } else {
+            0.0
+        };
+        let (offset, between) = justify_offset(flex.justify, free, count);
+        let mut main_pos = (if row { content.x } else { content.y }) + offset;
+        for item in &mut items[start..start + count] {
+            let (m_start, _) = main_margins(&item.style, row);
+            if row {
+                item.x = main_pos + m_start;
+            } else {
+                item.y = main_pos + m_start;
+            }
+            // Every junction carries the container gap plus the extra space the
+            // justify mode distributes (only the last item skips both).
+            main_pos += item_outer_main(item, row) + main_gap + between;
+        }
+
+        for item in &mut items[start..start + count] {
+            let (m_start, m_end) = cross_margins(&item.style, row);
+            let (p_start, p_end) = cross_padding(&item.style, row);
+            if flex.align == AlignItems::Stretch && cross_size_is_auto(item, row) {
+                // A stretched item fills the line.
+                item.cross = (line_size - m_start - m_end - p_start - p_end).max(0.0);
+            }
+            let outer = item.cross + p_start + p_end + m_start + m_end;
+            let aligned = match flex.align {
+                AlignItems::FlexStart => m_start,
+                AlignItems::Center => m_start + (line_size - outer) / 2.0,
+                AlignItems::FlexEnd => line_size - outer + m_start,
+                AlignItems::Stretch => m_start,
+            };
+            if row {
+                item.y = cross_pos + aligned;
+            } else {
+                item.x = cross_pos + aligned;
+            }
+        }
+
+        cross_pos += line_size + cross_gap;
+    }
+
+    // 8. The items are laid out for real.
+    let mut content_height = if row {
+        line_cross.iter().sum::<f64>() + cross_gap * (lines.len().saturating_sub(1)) as f64
+    } else {
+        0.0
+    };
+    for item in &items {
+        let (main_pad, cross_pad) = item_padding(&item.style, row);
+        let forced = Forced {
+            width: Some(if row {
+                item.main + main_pad
+            } else {
+                item.cross + cross_pad
+            }),
+            height: Some(if row {
+                item.cross + cross_pad
+            } else {
+                item.main + main_pad
+            }),
+            blockify: true,
+        };
+        let bottom = if let Some(text) = &item.text {
+            // An anonymous item: the inline content of the container in a
+            // block of its own.
+            out.push(LayoutBox {
+                node: usize::MAX,
+                tag: "#anonymous".to_string(),
+                x: item.x,
+                y: item.y,
+                w: item.main,
+                h: item.cross,
+                text: None,
+                color: item.style.color,
+                background: None,
+                font_size: item.style.font_size,
+                bold: item.style.bold,
+                centered: false,
+                image: None,
+            });
+            let mut run = text.clone();
+            flush_text(
+                shaper,
+                &item.style,
+                item.x,
+                item.y,
+                item.main.max(1.0),
+                &mut run,
+                out,
+                runs,
+            );
+            item.y + item.cross
+        } else {
+            let total = layout_node(
+                doc,
+                styles,
+                item.node,
+                item.x,
+                item.y,
+                content.w,
+                forced,
+                shaper,
+                images,
+                out,
+                runs,
+            );
+            let border_h = total - item.style.margin[0] - item.style.margin[2];
+            item.y + border_h
+        };
+        content_height = content_height.max(bottom - content.y);
+    }
+
+    let mut border_h = content_height + style.padding[0] + style.padding[2];
+    if let Some(h) = style.height {
+        border_h = border_h.max(h);
+    }
+    out[box_index].h = border_h.max(0.0);
+
+    border_h + style.margin[0] + style.margin[2]
+}
+
+/// The children of a flex container, as flex items.
+///
+/// Every in-flow child of a flex container is a flex item, and the inline
+/// content of the container becomes an anonymous item.
+fn collect_flex_items(doc: &Document, styles: &[Style], id: NodeId) -> Vec<FlexItemBox> {
+    let mut items: Vec<FlexItemBox> = Vec::new();
+    let mut text = String::new();
+
+    let mut push_text = |items: &mut Vec<FlexItemBox>, text: &mut String| {
+        if text.trim().is_empty() {
+            text.clear();
+            return;
+        }
+        items.push(FlexItemBox {
+            node: usize::MAX,
+            text: Some(text.clone()),
+            style: styles[id].clone(),
+            base: 0.0,
+            main: 0.0,
+            cross: 0.0,
+            x: 0.0,
+            y: 0.0,
+        });
+        text.clear();
+    };
+
+    for &child in &doc.nodes[id].children {
+        let child_style = &styles[child];
+        if child_style.display == Display::None {
+            continue;
+        }
+        if doc.nodes[child].is_text {
+            text.push_str(&doc.nodes[child].text);
+            continue;
+        }
+        if child_style.display == Display::Inline {
+            // The inline content of the container joins the anonymous item.
+            collect_inline_text(doc, child, &mut text);
+            continue;
+        }
+        push_text(&mut items, &mut text);
+        items.push(FlexItemBox {
+            node: child,
+            text: None,
+            style: child_style.clone(),
+            base: 0.0,
+            main: 0.0,
+            cross: 0.0,
+            x: 0.0,
+            y: 0.0,
+        });
+    }
+    push_text(&mut items, &mut text);
+
+    items
+}
+
+/// The flex base size of an item: its `flex-basis` when it is definite, and
+/// the size of its content otherwise.
+fn flex_base_size(
+    doc: &Document,
+    styles: &[Style],
+    item: &FlexItemBox,
+    row: bool,
+    main_avail: f64,
+    shaper: &TextShaper,
+    images: &ImageSet,
+) -> f64 {
+    match item.style.flex_item.basis {
+        FlexBasis::Px(px) => px,
+        FlexBasis::Percent(pct) => {
+            if main_avail.is_finite() {
+                main_avail * pct / 100.0
+            } else {
+                0.0
+            }
+        }
+        // `auto` and `content`: the size of the content of the item. A
+        // definite `width`/`height` acts as the basis.
+        FlexBasis::Auto | FlexBasis::Content => {
+            if row {
+                item.style.width.unwrap_or_else(|| {
+                    item_max_content_width(item, doc, styles, shaper, images)
+                })
+            } else {
+                item.style.height.unwrap_or_else(|| {
+                    measure_item_height(doc, styles, item, row, item.cross, shaper, images)
+                })
+            }
+        }
+    }
+}
+
+/// The items of a flex container, grouped into lines.
+fn flex_lines(items: &[FlexItemBox], row: bool, main_avail: f64, main_gap: f64) -> Vec<(usize, usize)> {
+    let mut lines: Vec<(usize, usize)> = Vec::new();
+    if items.is_empty() {
+        return lines;
+    }
+    let mut start = 0usize;
+    let mut used = 0.0f64;
+    for index in 0..items.len() {
+        let outer = item_outer_main(&items[index], row);
+        let needed = if index == start {
+            outer
+        } else {
+            used + main_gap + outer
+        };
+        if index > start && needed > main_avail {
+            lines.push((start, index - start));
+            start = index;
+            used = outer;
+        } else {
+            used = needed;
+        }
+    }
+    lines.push((start, items.len() - start));
+    lines
+}
+
+/// The main size of a line: the outer sizes of its items plus the gaps.
+fn line_main_size(items: &[FlexItemBox], row: bool, main_gap: f64) -> f64 {
+    let mut used = main_gap * items.len().saturating_sub(1) as f64;
+    for item in items {
+        used += item_outer_main(item, row);
+    }
+    used
+}
+
+/// The outer size of an item along the main axis: its content plus its
+/// padding and its margins.
+fn item_outer_main(item: &FlexItemBox, row: bool) -> f64 {
+    let (pad, _) = item_padding(&item.style, row);
+    let (m_start, m_end) = main_margins(&item.style, row);
+    item.main + pad + m_start + m_end
+}
+
+/// The padding of an item along the main and the cross axis.
+fn item_padding(style: &Style, row: bool) -> (f64, f64) {
+    if row {
+        (style.padding[3] + style.padding[1], style.padding[0] + style.padding[2])
+    } else {
+        (style.padding[0] + style.padding[2], style.padding[3] + style.padding[1])
+    }
+}
+
+/// The margins of an item along the main axis (start, end).
+fn main_margins(style: &Style, row: bool) -> (f64, f64) {
+    if row {
+        (style.margin[3], style.margin[1])
+    } else {
+        (style.margin[0], style.margin[2])
+    }
+}
+
+/// The margins of an item along the cross axis (start, end).
+fn cross_margins(style: &Style, row: bool) -> (f64, f64) {
+    if row {
+        (style.margin[0], style.margin[2])
+    } else {
+        (style.margin[3], style.margin[1])
+    }
+}
+
+/// The padding of an item along the main axis (start, end).
+fn main_padding(style: &Style, row: bool) -> (f64, f64) {
+    if row {
+        (style.padding[3], style.padding[1])
+    } else {
+        (style.padding[0], style.padding[2])
+    }
+}
+
+/// The padding of an item along the cross axis (start, end).
+fn cross_padding(style: &Style, row: bool) -> (f64, f64) {
+    if row {
+        (style.padding[0], style.padding[2])
+    } else {
+        (style.padding[3], style.padding[1])
+    }
+}
+
+/// Is the cross size of the item automatic, so that `align-items: stretch`
+/// applies to it?
+fn cross_size_is_auto(item: &FlexItemBox, row: bool) -> bool {
+    if row {
+        item.style.height.is_none()
+    } else {
+        item.style.width.is_none()
+    }
+}
+
+/// The offset of the items of a line and the extra space between them.
+fn justify_offset(justify: JustifyContent, free: f64, count: usize) -> (f64, f64) {
+    match justify {
+        JustifyContent::FlexStart => (0.0, 0.0),
+        JustifyContent::Center => (free / 2.0, 0.0),
+        JustifyContent::FlexEnd => (free, 0.0),
+        JustifyContent::SpaceBetween => {
+            let free = free.max(0.0);
+            (
+                0.0,
+                if count > 1 {
+                    free / (count - 1) as f64
+                } else {
+                    0.0
+                },
+            )
+        }
+        JustifyContent::SpaceAround => {
+            let free = free.max(0.0);
+            let each = if count > 0 { free / count as f64 } else { 0.0 };
+            (each / 2.0, each)
+        }
+        JustifyContent::SpaceEvenly => {
+            let free = free.max(0.0);
+            let each = if count > 0 {
+                free / (count + 1) as f64
+            } else {
+                0.0
+            };
+            (each, each)
+        }
+    }
+}
+
+/// The width of an item of a column container: the width of the line when it
+/// stretches, and the width of its content otherwise.
+fn column_item_width(
+    doc: &Document,
+    styles: &[Style],
+    item: &FlexItemBox,
+    cross_avail: f64,
+    shaper: &TextShaper,
+    images: &ImageSet,
+) -> f64 {
+    let (m_start, m_end) = cross_margins(&item.style, false);
+    let (p_start, p_end) = cross_padding(&item.style, false);
+    if cross_size_is_auto(item, false) {
+        let content = cross_avail - m_start - m_end - p_start - p_end;
+        if content.is_finite() {
+            return content.max(0.0);
+        }
+    }
+    item.style.width.unwrap_or_else(|| {
+        item_max_content_width(item, doc, styles, shaper, images).min(cross_avail)
+    })
+}
+
+/// The max-content width of a flex item: the DOM subtree of a real item, or the
+/// unwrapped text of an anonymous one (whose `node` is the `usize::MAX`
+/// sentinel and must never reach the DOM lookups).
+fn item_max_content_width(
+    item: &FlexItemBox,
+    doc: &Document,
+    styles: &[Style],
+    shaper: &TextShaper,
+    images: &ImageSet,
+) -> f64 {
+    if item.node == usize::MAX {
+        let text = item.text.as_deref().unwrap_or("");
+        // A huge width keeps every word on one line: the layout width is an
+        // i32 of Pango units, so stay far below its range.
+        let measured = shaper.measure(text, &item.style, 1_000_000.0);
+        return measured.lines.iter().map(|line| line.w).fold(0.0, f64::max);
+    }
+    max_content_width(doc, styles, item.node, shaper, images)
+}
+
+/// The height of the content of an item, measured in a scratch buffer so the
+/// real layout can place the item afterwards.
+fn measure_item_height(
+    doc: &Document,
+    styles: &[Style],
+    item: &FlexItemBox,
+    row: bool,
+    content_width: f64,
+    shaper: &TextShaper,
+    images: &ImageSet,
+) -> f64 {
+    if let Some(text) = &item.text {
+        return measure_text_height(shaper, text, &item.style, content_width);
+    }
+    let (p_start, p_end) = cross_padding(&item.style, row);
+    let forced = Forced {
+        width: Some((content_width + p_start + p_end).max(0.0)),
+        height: None,
+        blockify: true,
+    };
+    let mut boxes: Vec<LayoutBox> = Vec::new();
+    let mut runs: Vec<TextRun> = Vec::new();
+    let total = layout_node(
+        doc,
+        styles,
+        item.node,
+        0.0,
+        0.0,
+        content_width,
+        forced,
+        shaper,
+        images,
+        &mut boxes,
+        &mut runs,
+    );
+    // The returned height is the border height plus the vertical margins.
+    let border_h = total - item.style.margin[0] - item.style.margin[2];
+    (border_h - item.style.padding[0] - item.style.padding[2]).max(0.0)
+}
+
+/// The height of a text run laid out at `width`.
+fn measure_text_height(shaper: &TextShaper, text: &str, style: &Style, width: f64) -> f64 {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return 0.0;
+    }
+    shaper.measure(&normalized, style, width.max(1.0)).height
+}
+
+/// The width the content of an item would take without wrapping.
+fn max_content_width(
+    doc: &Document,
+    styles: &[Style],
+    id: NodeId,
+    shaper: &TextShaper,
+    images: &ImageSet,
+) -> f64 {
+    let style = &styles[id];
+    if is_image(doc, id) {
+        return images.image(id).map(|i| i.width as f64).unwrap_or(0.0);
+    }
+    let mut width = 0.0f64;
+    let mut text = String::new();
+    for &child in &doc.nodes[id].children {
+        let child_style = &styles[child];
+        if child_style.display == Display::None {
+            continue;
+        }
+        if is_image(doc, child) {
+            width = width.max(images.image(child).map(|i| i.width as f64).unwrap_or(0.0));
+        } else if child_style.display == Display::Block {
+            width = width.max(max_content_width(doc, styles, child, shaper, images));
+        } else {
+            collect_inline_text(doc, child, &mut text);
+        }
+    }
+    if !text.trim().is_empty() {
+        width = width.max(natural_text_width(shaper, &text, style));
+    }
+    width
+}
+
+/// The width of a text run measured without wrapping.
+fn natural_text_width(shaper: &TextShaper, text: &str, style: &Style) -> f64 {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return 0.0;
+    }
+    let measured = shaper.measure(&normalized, style, 100_000.0);
+    measured.lines.iter().map(|line| line.w).sum()
+}
+
+/// The inner height of a box with a definite height.
+fn definite_inner_height(style: &Style) -> Option<f64> {
+    style
+        .height
+        .map(|h| (h - style.padding[0] - style.padding[2]).max(0.0))
 }
 
 fn is_image(doc: &Document, id: NodeId) -> bool {
@@ -246,13 +991,20 @@ fn layout_image(
     origin_x: f64,
     origin_y: f64,
     available_width: f64,
+    forced: Forced,
     images: &ImageSet,
     out: &mut Vec<LayoutBox>,
 ) -> f64 {
     let style = &styles[id];
-    let content = content_box(style, origin_x, available_width);
+    let content = content_box(style, origin_x, origin_y, available_width, forced);
     let image = images.image(id);
-    let (w, h) = image_size(&doc.nodes[id], style, image.as_deref(), content.w);
+    let (w, h) = image_size(
+        &doc.nodes[id],
+        style,
+        image.as_deref(),
+        content.w,
+        forced.width.map(|w| w - style.padding[1] - style.padding[3]),
+    );
     let y = origin_y + style.margin[0] + style.padding[0];
 
     out.push(LayoutBox {
@@ -286,6 +1038,7 @@ fn image_size(
     style: &Style,
     image: Option<&Image>,
     max_width: f64,
+    forced_width: Option<f64>,
 ) -> (f64, f64) {
     let (intrinsic_w, intrinsic_h) = image
         .map(|image| (image.width as f64, image.height as f64))
@@ -304,6 +1057,16 @@ fn image_size(
         (None, Some(h)) => (scale_by(intrinsic_h, intrinsic_w, h), h),
         (None, None) => (intrinsic_w, intrinsic_h),
     };
+
+    // The flex algorithm decided the width of the item: the image fills it.
+    if let Some(forced) = forced_width {
+        w = forced;
+        h = match height_hint {
+            Some(h) => h,
+            None => scale_by(intrinsic_w, intrinsic_h, forced),
+        };
+        return (w.max(0.0), h.max(0.0));
+    }
 
     if w > max_width {
         let scale = max_width / w;

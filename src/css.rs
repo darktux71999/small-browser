@@ -193,6 +193,103 @@ pub enum TextAlign {
     Justify,
 }
 
+/// The main axis of a flex container: `row` (horizontal) or `column`
+/// (vertical).
+///
+/// The reverse variants (`row-reverse`, `column-reverse`) are not part of the
+/// minimal flexbox; the engine lays them out like their non-reversed twin.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FlexDirection {
+    #[default]
+    Row,
+    Column,
+}
+
+/// Whether a flex container breaks its items into several lines.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FlexWrap {
+    #[default]
+    NoWrap,
+    Wrap,
+}
+
+/// How a flex container distributes its items along the main axis.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum JustifyContent {
+    #[default]
+    FlexStart,
+    Center,
+    FlexEnd,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
+/// How a flex container aligns its items along the cross axis.
+///
+/// `baseline` is not part of the minimal flexbox: it falls back to
+/// [`AlignItems::FlexStart`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AlignItems {
+    #[default]
+    Stretch,
+    FlexStart,
+    Center,
+    FlexEnd,
+}
+
+/// The flex base size of a flex item.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum FlexBasis {
+    /// `auto`: the item's content size (its `width`/`height` when definite).
+    #[default]
+    Auto,
+    /// `content`: the item's content size.
+    Content,
+    /// A definite length in CSS pixels.
+    Px(f64),
+    /// A percentage of the flex container's main size.
+    Percent(f64),
+}
+
+/// The flex container properties of an element.
+///
+/// A flex container is an element whose computed `display` is `flex` (or
+/// `inline-flex`, which the engine treats as a block-level flex container).
+/// The engine keeps `display: block` for it and marks the container with
+/// `Style::flex`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FlexStyle {
+    pub direction: FlexDirection,
+    pub wrap: FlexWrap,
+    pub justify: JustifyContent,
+    pub align: AlignItems,
+    /// The gap between the lines of the container, in CSS pixels.
+    pub row_gap: f64,
+    /// The gap between the items of a line, in CSS pixels.
+    pub column_gap: f64,
+}
+
+/// The flex item properties of an element: `flex-grow`, `flex-shrink` and
+/// `flex-basis`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlexItem {
+    pub grow: f64,
+    pub shrink: f64,
+    pub basis: FlexBasis,
+}
+
+impl Default for FlexItem {
+    fn default() -> Self {
+        // The CSS initial value of `flex` is `0 1 auto`.
+        FlexItem {
+            grow: 0.0,
+            shrink: 1.0,
+            basis: FlexBasis::Auto,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Color {
     pub r: f64,
@@ -227,6 +324,16 @@ pub struct Style {
     pub letter_spacing: f64,
     pub bold: bool,
     pub inline_align: bool,
+    /// The flex container properties; `Some` when the element is a flex
+    /// container (`display: flex` or `display: inline-flex`).
+    ///
+    /// The engine has no `Display::Flex` variant (the CSS spike matches
+    /// `Display` exhaustively), so a flex container keeps `Display::Block` and
+    /// is marked here instead.
+    pub flex: Option<FlexStyle>,
+    /// The element's own flex item properties, used when the element is an
+    /// item of a flex container.
+    pub flex_item: FlexItem,
 }
 
 impl Default for Style {
@@ -248,6 +355,8 @@ impl Default for Style {
             letter_spacing: 0.0,
             bold: false,
             inline_align: false,
+            flex: None,
+            flex_item: FlexItem::default(),
         }
     }
 }
