@@ -10,13 +10,12 @@
 use std::env;
 
 fn main() {
-    let prefix = env::var("CSS_LIB_PREFIX").unwrap_or_else(|_| {
-        format!(
-            "{}/.cache/css-spike/prefix",
-            env::var("HOME").unwrap_or_default()
-        )
-    });
-    println!("cargo:rustc-link-search=native={prefix}/lib");
+    // System-first: only an EXPLICIT CSS_LIB_PREFIX adds a search path, so a
+    // plain `cargo build` links /usr/lib and never silently picks up dev
+    // archives from a private prefix (verifier advisory A1).
+    if let Ok(prefix) = env::var("CSS_LIB_PREFIX") {
+        println!("cargo:rustc-link-search=native={prefix}/lib");
+    }
 
     println!("cargo:rustc-link-lib=static=css");
     println!("cargo:rustc-link-lib=static=parserutils");
