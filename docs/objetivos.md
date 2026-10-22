@@ -16,21 +16,33 @@ block-flow con cairo → contenido completo y jerarquía visible (títulos, list
 footer, idiomas), 1000×2647, **35MB RSS** (frente a ~180MB/pestaña del experimento
 Blitz, retirado). La ventana SDL3 abre y cierra limpiamente.
 
-**Qué falta, por orden:**
+**Qué falta, por orden** (actualizado tras la Ola 1):
 
-1. **Subrecursos**: hojas de estilo externas (`<link>`) e imágenes. Sin esto la
-   página se ve "en crudo" (reader mode del HTML): es el gap de parecido más grande.
-2. **`window` y APIs DOM mínimas** para los scripts inline: hoy el único error es
-   `ReferenceError: window is not defined` (la propia página anuncia que necesita JS).
-3. **Bug de wrapping**: varias líneas largas se cortan en el borde derecho en vez
-   de ajustar (visible en el render de codeberg.org).
-4. **Pango para el texto** (interlineado, justificación, tracking, `@font-face` vía
+1. **Subrecursos CSS — HECHO** (Ola 1): `<link>` y `@import` se descargan y
+   cascadan en orden de documento; en codeberg.org el ink pasa de 0,043 → 0,206.
+   **Imágenes pendientes**: quedan huecos donde van logos e iconos.
+2. **`window` y APIs DOM mínimas — HECHO** (Ola 1): `window` (alias del global),
+   `location`, `navigator`, `addEventListener`; los scripts de Codeberg ya no
+   reportan errores.
+3. **Layout flex/grid — nuevo gap** (visible en el render): la navegación sale en
+   columna en vez de fila y las columnas apiladas. Lo necesitan Codeberg y la UI
+   de searxgo (Meta 2).
+4. **Bug de wrapping**: el envoltorio es por recuento de caracteres
+   (`layout.rs:152`) y corta líneas anchas; lo absorbe la migración a Pango.
+5. **Pango para el texto** (interlineado, justificación, tracking, `@font-face` vía
    fontconfig): tarea T3 de `odd/tasks/css-libcss.md`; el renderer del spike
    (`spikes/css/src/render.rs`) ya tiene el camino hecho.
 
 **Criterio de éxito**: comparar contra Firefox headless con la métrica ya probada
 (ink share + diff con fuzz 25% dentro de la caja de contenido —
 `spikes/css/fidelity.py`, método documentado en `docs/font-svg-fidelity.md`).
+
+## Interfaz (decisión tomada)
+
+La navegación del navegador será **a puro teclado, estilo luakit o vimb,
+inspirada en vi**: modos, comandos y keybindings vi-like, sin depender del ratón.
+Aplica cuando toque construir la UI (tras la Meta 1); nada del motor actual lo
+contradice (la shell SDL3 es solo el lienzo).
 
 ## Meta 2 — renderizar la UI que genera searxgo
 

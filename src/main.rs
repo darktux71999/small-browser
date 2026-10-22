@@ -38,11 +38,15 @@ fn main() -> ExitCode {
     };
 
     // Una URL http(s) se descarga con el cliente del sistema (net.rs/curl); un
-    // camino se lee del disco. El resto del pipeline es idéntico.
+    // camino se lee del disco. `base` resuelve los subrecursos relativos y
+    // `page_url` alimenta `location` en el runtime de JS.
     let source = file.to_string_lossy().to_string();
-    let html = if source.starts_with("http://") || source.starts_with("https://") {
-        match browser_lite::net::fetch_text(&source) {
-            Ok(html) => html,
+    let (html, base, page_url) = if source.starts_with("http://") || source.starts_with("https://") {
+        match browser_lite::net::fetch_text_result(&source) {
+            Ok((html, final_url)) => {
+                let base = final_url.clone();
+                (html, base, final_url)
+            }
             Err(err) => {
                 eprintln!("browser-lite: {source}: {err}");
                 return ExitCode::from(1);
@@ -50,7 +54,15 @@ fn main() -> ExitCode {
         }
     } else {
         match std::fs::read_to_string(&file) {
-            Ok(html) => html,
+            Ok(html) => {
+                let abs = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
+                let base = abs
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let page_url = format!("file://{}", abs.to_string_lossy());
+                (html, base, page_url)
+            }
             Err(err) => {
                 eprintln!("browser-lite: {}: {err}", file.display());
                 return ExitCode::from(1);
@@ -63,8 +75,9 @@ fn main() -> ExitCode {
         dump_dom(&doc);
     }
 
-    let sheets = css_libcss::stylesheets(&doc);
-    let styles = css_libcss::compute(&doc, &sheets, VIEWPORT_WIDTH);
+    // Estilos con subrecursos: los `<link>` y `@import` se descargan y cascadan
+    // en orden de documento junto a los `<style>` inline (S2).
+    let styles = css_libcss::compute_with_subresources(&doc, &base, VIEWPORT_WIDTH);
 
     let title = doc
         .query_selector("title")
@@ -78,6 +91,9 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    if let Err(err) = runtime.set_url(&page_url) {
+        eprintln!("browser-lite: js location: {err}");
+    }
     for (n, script_id) in doc.query_selector_all("script").into_iter().enumerate() {
         let source = doc.text_content(script_id);
         if source.trim().is_empty() {
