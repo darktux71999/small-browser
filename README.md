@@ -20,12 +20,13 @@ Navegador desktop ligero, desde cero, sobre el stack KISS ya instalado.
 Go se descartó: cgo en el límite DOM/JS es el camino caliente y encarece cada
 acceso. Rust con FFI fino enlaza las librerías del sistema sin duplicarlas.
 
-## Dos motores
+## Motor
 
-- `browser-lite` — motor propio (lexbor + CSS subset + cairo + SDL3). Ligero,
-  sin dependencias pesadas, útil como fallback y para `--dump/--png`.
-- `blitz-lite` — render real con Blitz (Stylo + Taffy + Vello) y QuickJS
-  ejecutando los scripts sobre el DOM de Blitz.
+Motor propio sobre el stack KISS del sistema (lexbor + CSS subset + cairo + SDL3),
+con QuickJS ejecutando los scripts sobre el DOM propio. El experimento con el
+motor Blitz (Stylo + Taffy + Vello) se retiró: costaba ~180MB por pestaña al
+traer el stack completo de un navegador moderno. La decisión de la capa de CSS
+se está midiendo en `spikes/css/` (ver `docs/api-comparativa.md`).
 
 ## Uso
 
@@ -34,9 +35,6 @@ cargo build
 ./target/debug/browser-lite test/data/demo.html        # ventana
 ./target/debug/browser-lite --dump test/data/demo.html # DOM + cajas
 ./target/debug/browser-lite --png out.png test/data/demo.html
-cargo run --bin blitz-lite -- test/data/js-dom.html   # Blitz + QuickJS
-cargo run --bin blitz-lite -- https://example.com      # carga por HTTP(S)
-cargo run --bin blitz-tabs -- test/data/nav-a.html     # pestañas + historial
 ```
 
 ## Estructura
@@ -54,21 +52,15 @@ src/sys.rs     FFI de liblexbor y libqjs
 Regla de dependencias: `shell -> paint -> layout -> css -> dom`, y `js` no
 depende de UI. Nada incluye `shell` hacia abajo.
 
-## Renderer
-
-`blitz-tabs` usa el backend CPU (`anyrender_vello_cpu`, softbuffer): la GPU
-(NVK/Kepler) genera traps `OOR_ADDR` con vello/wgpu en esta máquina.
-
 ## Estado
 
-Corte 1 completo en el motor propio. Corte 2: `blitz-lite` renderiza con
-Blitz y QuickJS muta el DOM (`getElementById`, `createElement`,
-`appendChild`, `setAttribute`, `textContent`, `querySelector`), y eventos
-`addEventListener('click')` con bubbling. 7 tests
-verdes en el motor propio; el puente Blitz se verifica por captura.
+Corte 1 completo en el motor propio: lexbor parsea HTML5, `css.rs` aplica el
+subset de CSS, `layout.rs` hace block flow y `paint.rs` pinta con cairo (PNG o
+ventana SDL3). QuickJS muta el DOM (`getElementById`, `createElement`,
+`appendChild`, `setAttribute`, `textContent`, `querySelector`) y hay eventos
+`addEventListener('click')` con bubbling. 7 tests verdes en el motor propio.
 
-Pestañas: `blitz-tabs`. Atajos: Ctrl+T (nueva), Ctrl+W (cerrar),
-Ctrl+Tab / Ctrl+Shift+Tab (ciclar), Alt+Izq/Der (historial). Los enlaces
-navegan y actualizan el historial de la pestaña.
-
-Siguiente: barra de pestañas visible, cookies/storage y sandbox por tab.
+Módulos de aplicación listos: `tabs` (pestañas + historial), `cookies`,
+`storage`, `net` (charset, redirecciones, async) y `sandbox` (seccomp +
+bubblewrap). Próximo corte: decidir la capa de CSS con el spike comparativo
+(`spikes/css/`, `docs/css-spike.md`), barra de pestañas visible y cookies/storage.

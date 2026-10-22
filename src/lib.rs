@@ -7,7 +7,6 @@ pub mod dom;
 pub mod history;
 pub mod js;
 pub mod layout;
-pub mod nav;
 pub mod net;
 pub mod paint;
 pub mod sandbox;
@@ -16,6 +15,3 @@ pub mod storage;
 pub mod sys;
 pub mod tabs;
 pub mod url;
-
-#[cfg(feature = "blitz-engine")]
-pub mod blitz_engine;
