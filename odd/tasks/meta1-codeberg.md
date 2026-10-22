@@ -39,7 +39,7 @@ codeberg.org. Mirror Engram: pendiente.
 |---|---|---|---|---|
 | T1 | Subrecursos CSS (`<link>`, `@import` remoto, caché, resolución de URLs relativas, orden de documento) | S2 | 1 (paralela) | ✅ 13 tests; codeberg ink 0,043 → 0,206 |
 | T2 | `window` + APIs DOM mínimas para scripts | S4 | 1 (paralela) | ✅ 16 tests; codeberg sin errores de script |
-| T3 | Texto a Pango + wrapping real (absorbe el bug de líneas cortadas) | S5 | 2 | pendiente |
+| T3 | Texto a Pango + wrapping real (absorbe el bug de líneas cortadas) | S5 | 2 | ✅ 0f61753 (codeberg: 0 líneas cortadas; altura 3014→4123) |
 | T4 | Imágenes (`<img>`: fetch, decode, pintura en caja) | S3 | 2 | pendiente |
 | T5 | Medición de la Meta 1 + informe | S1,S6 | 3 | pendiente |
 
@@ -58,3 +58,15 @@ sería bug de anchura de caja y se corrige ahí.
 - Diagnóstico previo (L1): el wrapping actual es por recuento de caracteres
   (`flush_text`, `layout.rs:152`: `max_chars = width / char_w`), de ahí las
   líneas cortadas en el render de codeberg.org; lo absorbe T3 (Pango).
+- **L2** (2026-10-22): Ola 1 cerrada (T1 subrecursos CSS + T2 window/location/navigator
+  + cableado, commits 6dd5665/702e108/617a043; codeberg ink 0,043→0,206, sin errores
+  de script) y T3 de la Ola 2 cerrado (commit 0f61753): texto medido/envuelto/pintado
+  con Pango a 72dpi (1pt=1px), interlineado y tracking como atributos. 13 tests con
+  RED observado en la base; suite completa 106 verdes + 1 ignorada. codeberg.org:
+  de 503 píxeles cortados a **cero tinta en los 3 últimos píxeles**, altura
+  3014→4123 (wrapping + interlineado reales), RSS 38,6→49,5MB. Diferencial sobre 40
+  fixtures: 0 diffs estructurales. Limitación conocida para T5: `css::Style::
+  font_family` conserva solo la primera familia de la pila CSS (las demás las
+  resuelve fontconfig como fallback); con JetBrains Mono como única fuente instalada
+  no es observable. Decisión de interfaz registrada por el usuario: navegación a
+  puro teclado estilo luakit/vimb (vi), en `docs/objetivos.md`.
