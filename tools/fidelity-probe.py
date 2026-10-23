@@ -60,7 +60,12 @@ def ink_metrics(path):
 
 
 def capture_blitz(binary, fixture, display, output, timeout=25.0):
-    """Open the fixture in blitz-lite and screenshot its window."""
+    """Open the fixture in blitz-lite and screenshot its window.
+
+    NOTE: the window is a fixed 1000x760 scrollable viewport since T8, so this
+    captures only the top of the document. For full-document fidelity metrics
+    use the `--png` path (see capture_legacy).
+    """
     process = subprocess.Popen(
         [binary, str(fixture)],
         stdout=subprocess.DEVNULL,

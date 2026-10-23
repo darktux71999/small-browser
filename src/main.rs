@@ -4,8 +4,10 @@ use std::process::ExitCode;
 use browser_lite::{css_libcss, dom, js, layout, paint, shell};
 use dom::{Document, NodeId};
 
-/// Layout width, also the viewport that `@media` is resolved against.
-const VIEWPORT_WIDTH: f64 = 1000.0;
+/// Layout width, also the viewport that `@media` is resolved against. It must
+/// match the interactive window width (`shell::VIEWPORT_WIDTH`, S9): the
+/// document is laid out once for the window that shows it.
+const VIEWPORT_WIDTH: f64 = shell::VIEWPORT_WIDTH as f64;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -121,14 +123,10 @@ fn main() -> ExitCode {
         }
         None if dump => dump_layout(&layout),
         None => {
-            let frame = match paint::render(&layout) {
-                Ok(frame) => frame,
-                Err(err) => {
-                    eprintln!("browser-lite: paint failed: {err}");
-                    return ExitCode::from(1);
-                }
-            };
-            if let Err(err) = shell::run(&frame, &runtime.title(), frames) {
+            // Interactive path (S9): the shell opens the fixed 1000x760
+            // viewport on the full-document layout and re-paints it on scroll.
+            // `--png`/`--dump` above keep rendering the whole document.
+            if let Err(err) = shell::run(&layout, &runtime.title(), frames) {
                 eprintln!("browser-lite: window failed: {err}");
                 return ExitCode::from(1);
             }

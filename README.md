@@ -40,6 +40,8 @@ cargo build
 ./target/debug/browser-lite test/data/demo.html        # ventana
 ./target/debug/browser-lite --dump test/data/demo.html # DOM + cajas
 ./target/debug/browser-lite --png out.png test/data/demo.html
+# la ventana abre un viewport fijo de 1000x760 con scroll: ↑/↓, PgUp/PgDn,
+# Home/End y j/k/g/G (vi). `--png` sigue capturando el documento completo.
 ```
 
 ## Estructura

@@ -13,6 +13,7 @@ use cairo::{Context, Format, ImageSurface};
 
 use crate::img::Image;
 use crate::layout::{pango, Layout, LayoutBox};
+use crate::shell::{VIEWPORT_HEIGHT, VIEWPORT_WIDTH};
 
 #[derive(Clone)]
 pub struct Frame {
@@ -21,29 +22,32 @@ pub struct Frame {
     pub height: i32,
 }
 
+/// Full-document frame: every box of `layout`, untouched. This is the
+/// measuring path behind `--png`, so it must stay byte-identical.
 pub fn render(layout: &Layout) -> Result<Frame, String> {
     let width = layout.width.max(1.0) as i32;
     let height = layout.height.ceil().max(1.0) as i32;
 
     let mut surface =
         ImageSurface::create(Format::ARgb32, width, height).map_err(|e| e.to_string())?;
-    draw(&surface, layout)?;
+    draw(&surface, layout, None)?;
 
-    let stride = surface.stride() as usize;
-    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-    {
-        let data = surface.data().map_err(|e| e.to_string())?;
-        for row in 0..height as usize {
-            let start = row * stride;
-            pixels.extend_from_slice(&data[start..start + width as usize * 4]);
-        }
-    }
+    frame_from_surface(&mut surface, width, height)
+}
 
-    Ok(Frame {
-        pixels,
-        width,
-        height,
-    })
+/// Interactive frame (S9): exactly [`VIEWPORT_WIDTH`] x [`VIEWPORT_HEIGHT`]
+/// pixels of `layout`, clipped to the viewport, with the document translated
+/// up by `scroll_offset`. Nothing is truncated: the caller passes the full
+/// layout and the offset, the painter only decides what is visible.
+pub fn render_viewport(layout: &Layout, scroll_offset: f64) -> Result<Frame, String> {
+    let width = VIEWPORT_WIDTH;
+    let height = VIEWPORT_HEIGHT;
+
+    let mut surface =
+        ImageSurface::create(Format::ARgb32, width, height).map_err(|e| e.to_string())?;
+    draw(&surface, layout, Some(scroll_offset))?;
+
+    frame_from_surface(&mut surface, width, height)
 }
 
 pub fn render_to_png(layout: &Layout, path: &Path) -> Result<(), String> {
@@ -52,15 +56,31 @@ pub fn render_to_png(layout: &Layout, path: &Path) -> Result<(), String> {
 
     let surface =
         ImageSurface::create(Format::ARgb32, width, height).map_err(|e| e.to_string())?;
-    draw(&surface, layout)?;
+    draw(&surface, layout, None)?;
 
     let mut file = File::create(path).map_err(|e| e.to_string())?;
     surface.write_to_png(&mut file).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn draw(surface: &ImageSurface, layout: &Layout) -> Result<(), String> {
+/// `scroll` is `None` for the full-document renders (`render`,
+/// `render_to_png`, and therefore `--png`) and `Some(offset)` for the
+/// interactive viewport: clip first in device space, then move the document.
+fn draw(surface: &ImageSurface, layout: &Layout, scroll: Option<f64>) -> Result<(), String> {
     let cr = Context::new(surface).map_err(|e| e.to_string())?;
+    if let Some(offset) = scroll {
+        // A fresh context has an identity matrix, so this clip is in device
+        // space (the viewport). The translation afterwards is applied to every
+        // box and every Pango run, moving document row `offset` to the top.
+        cr.rectangle(
+            0.0,
+            0.0,
+            f64::from(surface.width()),
+            f64::from(surface.height()),
+        );
+        cr.clip();
+        cr.translate(0.0, -offset);
+    }
     cr.set_source_rgb(1.0, 1.0, 1.0);
     cr.paint().map_err(|e| e.to_string())?;
 
@@ -156,4 +176,27 @@ fn rgba_surface(image: &Image) -> Result<ImageSurface, String> {
         }
     }
     Ok(surface)
+}
+
+/// Copies the surface rows (stride aware) into a tightly packed ARGB frame.
+fn frame_from_surface(
+    surface: &mut ImageSurface,
+    width: i32,
+    height: i32,
+) -> Result<Frame, String> {
+    let stride = surface.stride() as usize;
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    {
+        let data = surface.data().map_err(|e| e.to_string())?;
+        for row in 0..height as usize {
+            let start = row * stride;
+            pixels.extend_from_slice(&data[start..start + width as usize * 4]);
+        }
+    }
+
+    Ok(Frame {
+        pixels,
+        width,
+        height,
+    })
 }

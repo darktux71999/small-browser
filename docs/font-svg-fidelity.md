@@ -27,8 +27,9 @@ no `xdotool` or `xwininfo`, so the window tree is walked through Xlib.
 
 ## Method
 
-- The window is 1044x1036. The browser window is captured with
-  `import -window <id>`, so the screenshot is the page and not the desktop.
+- The window is a fixed 1000x760 scrollable viewport (since T8); window
+  captures cover only the top of the document. The browser window is captured
+  with `import -window <id>`, so the screenshot is the page and not the desktop.
 - Firefox renders the same file with `--headless --screenshot` at the same
   size, over a `file://` URL, so relative resources resolve the same way.
 - The comparison region is the bounding box of the content **in the
