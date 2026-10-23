@@ -209,7 +209,7 @@ extern "C" {
     ) -> bool;
     fn SDL_RenderPresent(renderer: *mut SDL_Renderer);
     fn SDL_PollEvent(event: *mut SdlEvent) -> bool;
-    fn SDL_WaitEventTimeout(event: *mut SdlEvent, timeout_ms: c_int) -> bool;
+    fn SDL_Delay(ms: u32);
     fn SDL_GetError() -> *const c_char;
 }
 
@@ -367,8 +367,13 @@ pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), 
             SDL_RenderPresent(renderer);
             frames += 1;
 
-            let mut idle = SdlEvent::new();
-            SDL_WaitEventTimeout(&mut idle, 16);
+            // Sleep between frames WITHOUT consuming events. The previous
+            // SDL_WaitEventTimeout stored the wake-up event in a buffer that
+            // was never dispatched, so every lone key press (arrows, j/k,
+            // PageUp/PageDown, Home/End) was swallowed here and scrolling
+            // never fired. SDL_Delay leaves the event queued for the next
+            // SDL_PollEvent above.
+            SDL_Delay(16);
         }
 
         finish(texture, renderer, window, Ok(()))
@@ -399,5 +404,39 @@ fn error(what: &str) -> String {
             std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
         };
         format!("{what}: {detail}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the SDL 3.4.x `SDL_KeyboardEvent` decode against a synthetic event
+    /// buffer (type 0, reserved 4, timestamp 8, windowID 16, which 20,
+    /// scancode 24, key 28, mod 32). An ABI or offset drift must fail here
+    /// instead of silently breaking keyboard scrolling.
+    #[test]
+    fn keyboard_event_decode_matches_sdl3_layout() {
+        let mut event = SdlEvent::new();
+        event.0[0..4].copy_from_slice(&SDL_EVENT_KEY_DOWN.to_ne_bytes());
+        event.0[28..32].copy_from_slice(&KEY_J.to_ne_bytes());
+        event.0[32..34].copy_from_slice(&1u16.to_ne_bytes()); // KMOD_LSHIFT
+        assert_eq!(event.kind(), SDL_EVENT_KEY_DOWN);
+        assert_eq!(event.key(), KEY_J);
+        assert_eq!(event.modifiers(), 1);
+    }
+
+    /// A decoded key-down drives the scroll model end to end: `j` scrolls one
+    /// line, vi `G` (shift + `g`) jumps to the bottom.
+    #[test]
+    fn decoded_keys_drive_the_scroll_model() {
+        assert_eq!(
+            scroll_action_from_key(KEY_J, 0),
+            Some(ScrollAction::LineDown)
+        );
+        assert_eq!(
+            scroll_action_from_key(KEY_G_LOWER, 1),
+            Some(ScrollAction::Bottom)
+        );
     }
 }
