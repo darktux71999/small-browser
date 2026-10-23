@@ -290,3 +290,17 @@ fn block_pages_without_grid_still_stack() {
     );
     assert!(near(a.x, b.x), "blocks share the left edge");
 }
+
+// A grid item that is itself a formatting context must be laid out at its cell
+// width (review finding R3-4).
+
+#[test]
+fn nested_flex_item_uses_its_cell_width() {
+    let out = dump("nested-contexts.html");
+    let inner = item_box(&out, "inner");
+    assert!(
+        (inner.w - 200.0).abs() < 2.0,
+        "the nested flex box must take its 200px cell, got width {}",
+        inner.w
+    );
+}

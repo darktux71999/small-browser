@@ -295,3 +295,26 @@ fn flex_wrap_breaks_the_items_into_lines() {
         wrap.h
     );
 }
+
+// Nested formatting contexts are laid out at their allotted width, not at the
+// parent's available width (review finding R3-4, confirmed live: Codeberg's
+// auth links were sized to the container and pushed past the window edge).
+
+#[test]
+fn nested_flex_item_is_content_sized() {
+    let (doc, styles) = load("nested-contexts.html");
+    let layout = layout::layout(&doc, &styles, VIEWPORT);
+
+    let auth = box_of(&layout, &doc, "#auth");
+    assert!(
+        auth.w < 300.0,
+        "a nested flex item must be content-sized, got width {}",
+        auth.w
+    );
+    assert!(
+        auth.x + auth.w <= 1000.5,
+        "the auth group must stay inside the canvas: {}+{}",
+        auth.x,
+        auth.w
+    );
+}

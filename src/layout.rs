@@ -169,12 +169,12 @@ fn layout_node(
     }
     if style.flex.is_some() {
         return layout_flex_container(
-            doc, styles, id, origin_x, origin_y, available_width, shaper, images, out, runs,
+            doc, styles, id, origin_x, origin_y, available_width, forced, shaper, images, out, runs,
         );
     }
     if style.grid.is_some() {
         return layout_grid_container(
-            doc, styles, id, origin_x, origin_y, available_width, shaper, images, out, runs,
+            doc, styles, id, origin_x, origin_y, available_width, forced, shaper, images, out, runs,
         );
     }
 
@@ -354,6 +354,7 @@ fn layout_flex_container(
     origin_x: f64,
     origin_y: f64,
     available_width: f64,
+    forced: Forced,
     shaper: &TextShaper,
     images: &ImageSet,
     out: &mut Vec<LayoutBox>,
@@ -363,7 +364,7 @@ fn layout_flex_container(
     let flex = style.flex.unwrap_or_default();
     let row = flex.direction == FlexDirection::Row;
 
-    let content = content_box(style, origin_x, origin_y, available_width, Forced::default());
+    let content = content_box(style, origin_x, origin_y, available_width, forced);
     let border_y = origin_y + style.margin[0];
 
     let box_index = out.len();
@@ -887,6 +888,7 @@ fn layout_grid_container(
     origin_x: f64,
     origin_y: f64,
     available_width: f64,
+    forced: Forced,
     shaper: &TextShaper,
     images: &ImageSet,
     out: &mut Vec<LayoutBox>,
@@ -901,7 +903,7 @@ fn layout_grid_container(
     }
     let ncols = tracks.len();
 
-    let content = content_box(style, origin_x, origin_y, available_width, Forced::default());
+    let content = content_box(style, origin_x, origin_y, available_width, forced);
     let border_y = origin_y + style.margin[0];
 
     let box_index = out.len();
