@@ -237,3 +237,16 @@ sería bug de anchura de caja y se corrige ahí.
   de viewport; R3-2 decode de eventos SDL sin test de offsets; R3-3
   `fidelity-probe.py:capture_blitz` sigue capturando la ventana (recorte) en
   vez de `--png` completo.
+- **L12** (2026-10-23): **bug del scroll encontrado y corregido** (reporte del
+  usuario: «se ve bien pero no funciona el scroll»). Causa raíz: el bucle de
+  frames terminaba con `SDL_WaitEventTimeout(&mut idle, 16)`, que guarda en su
+  buffer el evento que lo despierta y el código lo **descartaba sin despachar**
+  — cada pulsación solitaria (flechas, j/k, PgUp/PgDn, g/G) se tragaba al final
+  de cada frame; solo sobrevivían ráfagas (por eso el cierre de ventana
+  funcionaba). Fix 67fc20a: `SDL_Delay(16)` (no consume eventos; la pulsación
+  queda en cola para el `SDL_PollEvent` del siguiente frame) + 2 pins unitarios
+  del decode SDL3 (offsets key@28/mod@32, riesgo R3-2 del review) y del mapeo
+  tecla→acción. Validado en ventana real por el usuario: «el scroll funciona!».
+  `Risk: item 6` (el consumo de eventos en el bucle FFI no es testeable
+  automáticamente; aceptación = prueba de teclado real) → verificador
+  independiente lanzado (mimo-v2.6-flash) sobre el wiring del bucle.
