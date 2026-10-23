@@ -9,12 +9,16 @@
 //! A box whose computed `display` is `flex` opens a flex formatting context
 //! ([`layout_flex_container`]): its children become flex items laid out along
 //! the main axis instead of stacking in the block flow.
+//!
+//! A box whose computed `display` is `grid` opens a grid formatting context
+//! ([`layout_grid_container`]): its children become grid items placed into
+//! the tracks of `grid-template-columns`, one row at a time.
 
 use std::os::raw::{c_int, c_void};
 use std::rc::Rc;
 
 use crate::css::{
-    AlignItems, Display, FlexBasis, FlexDirection, JustifyContent, Style,
+    AlignItems, Display, FlexBasis, FlexDirection, GridTrack, JustifyContent, Style,
 };
 use crate::dom::{Document, NodeId};
 use crate::img::{Image, ImageSet};
@@ -165,6 +169,11 @@ fn layout_node(
     }
     if style.flex.is_some() {
         return layout_flex_container(
+            doc, styles, id, origin_x, origin_y, available_width, shaper, images, out, runs,
+        );
+    }
+    if style.grid.is_some() {
+        return layout_grid_container(
             doc, styles, id, origin_x, origin_y, available_width, shaper, images, out, runs,
         );
     }
@@ -833,6 +842,390 @@ fn justify_offset(justify: JustifyContent, free: f64, count: usize) -> (f64, f64
             (each, each)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Grid layout (S8)
+// ---------------------------------------------------------------------------
+
+/// One grid item: a child of a grid container.
+struct GridItemBox {
+    /// The DOM node of the item. `usize::MAX` marks an anonymous item built
+    /// from the inline content of the container.
+    node: NodeId,
+    /// The text of an anonymous item.
+    text: Option<String>,
+    /// The item's own style.
+    style: Style,
+    /// How many tracks (columns) and rows the item spans.
+    col_span: u32,
+    row_span: u32,
+    /// The placed column and row of the item's start.
+    col: usize,
+    row: usize,
+    /// The border-box origin of the item.
+    x: f64,
+    y: f64,
+    /// The content-box size of the item: its spanned tracks and rows.
+    w: f64,
+    h: f64,
+}
+
+/// Lays out a grid container: its children become grid items placed into the
+/// tracks of `grid-template-columns` in row-major order (sparse packing, one
+/// row at a time), with auto row heights from the content.
+///
+/// The algorithm resolves the track widths (definite `px` tracks, `auto`
+/// tracks from their content, `fr` tracks from the free space left), places
+/// every item (honouring `grid-column`/`grid-row` spans), measures the row
+/// heights at the spanned widths, and stretches every item to fill its cell.
+#[allow(clippy::too_many_arguments)]
+fn layout_grid_container(
+    doc: &Document,
+    styles: &[Style],
+    id: NodeId,
+    origin_x: f64,
+    origin_y: f64,
+    available_width: f64,
+    shaper: &TextShaper,
+    images: &ImageSet,
+    out: &mut Vec<LayoutBox>,
+    runs: &mut Vec<TextRun>,
+) -> f64 {
+    let style = &styles[id];
+    let mut tracks = style.grid.clone().map(|grid| grid.tracks).unwrap_or_default();
+    if tracks.is_empty() {
+        // The implicit single column, for `display: grid` without a track
+        // list (the CSS layer normally fills this in).
+        tracks.push(GridTrack::Auto);
+    }
+    let ncols = tracks.len();
+
+    let content = content_box(style, origin_x, origin_y, available_width, Forced::default());
+    let border_y = origin_y + style.margin[0];
+
+    let box_index = out.len();
+    out.push(LayoutBox {
+        node: id,
+        tag: doc.nodes[id].tag.clone(),
+        x: content.border_x,
+        y: border_y,
+        w: content.border_w,
+        h: 0.0,
+        text: None,
+        color: style.color,
+        background: style.background,
+        font_size: style.font_size,
+        bold: style.bold,
+        centered: style.inline_align,
+        image: None,
+    });
+
+    let mut items = collect_grid_items(doc, styles, id);
+    if items.is_empty() {
+        let height = style.height.unwrap_or(0.0).max(0.0);
+        out[box_index].h = height;
+        return height + style.margin[0] + style.margin[2];
+    }
+
+    let col_gap = style.column_gap;
+    let row_gap = style.row_gap;
+
+    // 1. The items are placed row by row: every item takes the first run of
+    //    free cells at or after the cursor (sparse packing: never backfill).
+    let mut occupied: Vec<Vec<bool>> = Vec::new();
+    let mut cursor = (0usize, 0usize);
+    for item in &mut items {
+        let span = (item.col_span as usize).clamp(1, ncols);
+        item.col_span = span as u32;
+        let rspan = (item.row_span as usize).clamp(1, 1000);
+        item.row_span = rspan as u32;
+        let (row, col) = place_grid_item(&mut occupied, ncols, cursor, span, rspan);
+        item.row = row;
+        item.col = col;
+        cursor = if col + span >= ncols {
+            (row + 1, 0)
+        } else {
+            (row, col + span)
+        };
+    }
+    let nrows = occupied.len().max(1);
+
+    // 2. The track widths: definite tracks keep their size, `auto` tracks
+    //    size to the content of the items that occupy only them, and `fr`
+    //    tracks share the free space that is left.
+    let mut widths = vec![0.0f64; ncols];
+    let mut fr_total = 0.0f64;
+    for (index, track) in tracks.iter().enumerate() {
+        match track {
+            GridTrack::Px(px) => widths[index] = *px,
+            GridTrack::Fr(fr) => fr_total += fr,
+            GridTrack::Auto => {
+                widths[index] = auto_track_width(&items, index, doc, styles, shaper, images);
+            }
+        }
+    }
+    let used: f64 =
+        widths.iter().sum::<f64>() + col_gap * ncols.saturating_sub(1) as f64;
+    if used < content.w && fr_total > 0.0 {
+        let free = content.w - used;
+        for (index, track) in tracks.iter().enumerate() {
+            if let GridTrack::Fr(fr) = track {
+                widths[index] += free * fr / fr_total;
+            }
+        }
+    }
+    for width in &mut widths {
+        *width = (*width).max(0.0);
+    }
+
+    // 3. The row heights: every row is as tall as the tallest item that
+    //    starts in it, measured at its spanned width.
+    let mut heights = vec![0.0f64; nrows];
+    for item in &items {
+        if item.row_span != 1 {
+            continue;
+        }
+        let width = span_size(&widths, item.col, item.col_span as usize, col_gap);
+        let item_view = flex_view_of(item);
+        let height = measure_item_height(doc, styles, &item_view, true, width, shaper, images);
+        heights[item.row] = heights[item.row].max(height);
+    }
+
+    // 4. The items are placed at their cell origins and stretched to it.
+    let mut col_x = vec![0.0f64; ncols];
+    let mut x = content.x;
+    for (index, width) in widths.iter().enumerate() {
+        col_x[index] = x;
+        x += width + col_gap;
+    }
+    let mut row_y = vec![0.0f64; nrows];
+    let mut y = content.y;
+    for (index, height) in heights.iter().enumerate() {
+        row_y[index] = y;
+        y += height + row_gap;
+    }
+    for item in &mut items {
+        item.x = col_x[item.col];
+        item.y = row_y[item.row];
+        item.w = span_size(&widths, item.col, item.col_span as usize, col_gap);
+        item.h = span_size(&heights, item.row, item.row_span as usize, row_gap);
+    }
+
+    // 5. The items are laid out for real, stretched to fill their cell.
+    let mut content_height = 0.0f64;
+    for item in &items {
+        let forced = Forced {
+            width: Some((item.w + item.style.padding[3] + item.style.padding[1]).max(0.0)),
+            height: Some((item.h + item.style.padding[0] + item.style.padding[2]).max(0.0)),
+            blockify: true,
+        };
+        let bottom = if let Some(text) = &item.text {
+            // An anonymous item: the inline content of the container in a
+            // block of its own.
+            out.push(LayoutBox {
+                node: usize::MAX,
+                tag: "#anonymous".to_string(),
+                x: item.x,
+                y: item.y,
+                w: item.w,
+                h: item.h,
+                text: None,
+                color: item.style.color,
+                background: None,
+                font_size: item.style.font_size,
+                bold: item.style.bold,
+                centered: false,
+                image: None,
+            });
+            let mut run = text.clone();
+            flush_text(
+                shaper,
+                &item.style,
+                item.x,
+                item.y,
+                item.w.max(1.0),
+                &mut run,
+                out,
+                runs,
+            );
+            item.y + item.h
+        } else {
+            let total = layout_node(
+                doc,
+                styles,
+                item.node,
+                item.x,
+                item.y,
+                content.w,
+                forced,
+                shaper,
+                images,
+                out,
+                runs,
+            );
+            let border_h = total - item.style.margin[0] - item.style.margin[2];
+            item.y + border_h
+        };
+        content_height = content_height.max(bottom - content.y);
+    }
+
+    let mut border_h = content_height + style.padding[0] + style.padding[2];
+    if let Some(h) = style.height {
+        border_h = border_h.max(h);
+    }
+    out[box_index].h = border_h.max(0.0);
+
+    border_h + style.margin[0] + style.margin[2]
+}
+
+/// The children of a grid container, as grid items.
+///
+/// Every in-flow child of a grid container is a grid item, and the inline
+/// content of the container becomes an anonymous item.
+fn collect_grid_items(doc: &Document, styles: &[Style], id: NodeId) -> Vec<GridItemBox> {
+    let mut items: Vec<GridItemBox> = Vec::new();
+    let mut text = String::new();
+
+    let mut push_text = |items: &mut Vec<GridItemBox>, text: &mut String| {
+        if text.trim().is_empty() {
+            text.clear();
+            return;
+        }
+        items.push(GridItemBox {
+            node: usize::MAX,
+            text: Some(text.clone()),
+            style: styles[id].clone(),
+            col_span: 1,
+            row_span: 1,
+            col: 0,
+            row: 0,
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        });
+        text.clear();
+    };
+
+    for &child in &doc.nodes[id].children {
+        let child_style = &styles[child];
+        if child_style.display == Display::None {
+            continue;
+        }
+        if doc.nodes[child].is_text {
+            text.push_str(&doc.nodes[child].text);
+            continue;
+        }
+        if child_style.display == Display::Inline {
+            // The inline content of the container joins the anonymous item.
+            collect_inline_text(doc, child, &mut text);
+            continue;
+        }
+        push_text(&mut items, &mut text);
+        items.push(GridItemBox {
+            node: child,
+            text: None,
+            style: child_style.clone(),
+            col_span: child_style.grid_item.col_span,
+            row_span: child_style.grid_item.row_span,
+            col: 0,
+            row: 0,
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        });
+    }
+    push_text(&mut items, &mut text);
+
+    items
+}
+
+/// Places one item: the first run of `span` free cells in row `cursor.0` at
+/// or after `cursor.1`, or in a later row from its start. Marks the spanned
+/// cells occupied and returns the start of the item.
+fn place_grid_item(
+    occupied: &mut Vec<Vec<bool>>,
+    ncols: usize,
+    cursor: (usize, usize),
+    span: usize,
+    rspan: usize,
+) -> (usize, usize) {
+    let (mut row, col) = if cursor.1 >= ncols {
+        (cursor.0 + 1, 0)
+    } else {
+        cursor
+    };
+    loop {
+        while occupied.len() < row + rspan {
+            occupied.push(vec![false; ncols]);
+        }
+        let first = if row == cursor.0 { col } else { 0 };
+        for start in first..=ncols.saturating_sub(span) {
+            let free = (0..rspan)
+                .all(|dr| (0..span).all(|dc| !occupied[row + dr][start + dc]));
+            if free {
+                for dr in 0..rspan {
+                    for dc in 0..span {
+                        occupied[row + dr][start + dc] = true;
+                    }
+                }
+                return (row, start);
+            }
+        }
+        row += 1;
+    }
+}
+
+/// The width of one `auto` track: the widest content of the items that
+/// occupy only that track. Tracks with no such item (or only spanned items)
+/// start at zero and let the `fr` tracks or the container edge decide.
+fn auto_track_width(
+    items: &[GridItemBox],
+    col: usize,
+    doc: &Document,
+    styles: &[Style],
+    shaper: &TextShaper,
+    images: &ImageSet,
+) -> f64 {
+    let mut width = 0.0f64;
+    for item in items {
+        if item.col != col || item.col_span != 1 {
+            continue;
+        }
+        width = width.max(item_max_content_width(
+            &flex_view_of(item),
+            doc,
+            styles,
+            shaper,
+            images,
+        ));
+    }
+    width
+}
+
+/// The flex view of a grid item, so grid reuses the flex measuring helpers
+/// over the same content instead of re-implementing them.
+fn flex_view_of(item: &GridItemBox) -> FlexItemBox {
+    FlexItemBox {
+        node: item.node,
+        text: item.text.clone(),
+        style: item.style.clone(),
+        base: 0.0,
+        main: 0.0,
+        cross: 0.0,
+        x: 0.0,
+        y: 0.0,
+    }
+}
+
+/// The size of `span` consecutive tracks starting at `start`, including the
+/// gaps between them.
+fn span_size(sizes: &[f64], start: usize, span: usize, gap: f64) -> f64 {
+    let end = (start + span).min(sizes.len());
+    let size: f64 = sizes[start.min(sizes.len())..end].iter().sum();
+    size + gap * end.saturating_sub(start + 1) as f64
 }
 
 /// The width of an item of a column container: the width of the line when it

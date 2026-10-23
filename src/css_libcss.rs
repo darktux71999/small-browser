@@ -46,7 +46,7 @@ use url::Url;
 
 use crate::css::{
     AlignItems, Color, Display, FlexBasis, FlexDirection, FlexItem, FlexStyle, FlexWrap,
-    JustifyContent, Style, TextAlign,
+    GridItem, GridStyle, JustifyContent, Style, TextAlign,
 };
 use crate::dom::{Document, Node, NodeId};
 
@@ -1742,6 +1742,319 @@ fn find_block_end(bytes: &[u8], i: usize) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// Grid properties (S8)
+// ---------------------------------------------------------------------------
+
+/// libcss 0.9.2 knows `display: grid` but none of the grid placement
+/// properties, so they are read here, straight from the author stylesheets.
+///
+/// The cascade is the author's document order with specificity and
+/// `!important`, resolved per element: every style rule whose selector
+/// matches the element contributes its grid declarations, and so does the
+/// element's own `style=""` attribute (which wins over plain author rules but
+/// loses to author `!important`, per CSS). Only three properties are read —
+/// `grid-template-columns`, `grid-column` and `grid-row` — because those are
+/// all the minimal grid lays out with.
+fn apply_grid_styles(doc: &Document, sheets: &[&str], out: &mut [Style]) {
+    #[derive(Clone)]
+    struct Bid {
+        important: bool,
+        inline: bool,
+        specificity: (u32, u32, u32),
+        order: u32,
+        columns: Option<String>,
+        col_span: Option<u32>,
+        row_span: Option<u32>,
+    }
+
+    let mut best: Vec<Option<Bid>> = vec![None; out.len()];
+    let mut order = 0u32;
+
+    let mut consider = |id: NodeId,
+                        bid: Bid,
+                        best: &mut Vec<Option<Bid>>| {
+        if id >= best.len() {
+            return;
+        }
+        let wins = match &best[id] {
+            None => true,
+            Some(prev) => (bid.important, bid.inline, bid.specificity, bid.order)
+                > (prev.important, prev.inline, prev.specificity, prev.order),
+        };
+        if wins {
+            // A rule only carries the grid properties it declares: keep the
+            // winner's values, filling the gaps from the previous best.
+            let merged = match &best[id] {
+                Some(prev) => Bid {
+                    columns: bid.columns.or_else(|| prev.columns.clone()),
+                    col_span: bid.col_span.or(prev.col_span),
+                    row_span: bid.row_span.or(prev.row_span),
+                    ..bid
+                },
+                None => bid,
+            };
+            best[id] = Some(merged);
+        }
+    };
+
+    for css in sheets {
+        for_each_style_rule(css, &mut |prelude, body| {
+            order = order.saturating_add(1);
+            let decls = grid_declarations(body);
+            if decls.is_empty() {
+                return;
+            }
+            for selector in prelude.split(',') {
+                let selector = selector.trim();
+                if selector.is_empty() {
+                    continue;
+                }
+                let specificity = selector_specificity(selector);
+                for id in doc.query_selector_all(selector) {
+                    consider(
+                        id,
+                        Bid {
+                            important: decls.important,
+                            inline: false,
+                            specificity,
+                            order,
+                            columns: decls.columns.clone(),
+                            col_span: decls.col_span,
+                            row_span: decls.row_span,
+                        },
+                        &mut best,
+                    );
+                }
+            }
+        });
+    }
+
+    // The `style=""` attribute: an inline declaration list, parsed like the
+    // inline sheets above but matched to its own element.
+    for id in 0..doc.nodes.len() {
+        let Some(decls) = doc.nodes[id].attr("style") else {
+            continue;
+        };
+        if decls.trim().is_empty() {
+            continue;
+        }
+        let mut inline = String::new();
+        rewrite_declarations(decls, &mut inline);
+        let decls = grid_declarations(&inline);
+        if decls.is_empty() {
+            continue;
+        }
+        consider(
+            id,
+            Bid {
+                important: decls.important,
+                inline: true,
+                specificity: (0, 0, 0),
+                order: u32::MAX,
+                columns: decls.columns.clone(),
+                col_span: decls.col_span,
+                row_span: decls.row_span,
+            },
+            &mut best,
+        );
+    }
+
+    for (id, bid) in best.into_iter().enumerate() {
+        let Some(bid) = bid else { continue };
+        if let Some(span) = bid.col_span {
+            out[id].grid_item.col_span = span;
+        }
+        if let Some(span) = bid.row_span {
+            out[id].grid_item.row_span = span;
+        }
+        if out[id].grid.is_some() {
+            let tracks = bid
+                .columns
+                .as_deref()
+                .and_then(crate::css::parse_grid_tracks)
+                .unwrap_or_else(|| vec![crate::css::GridTrack::Auto]);
+            out[id].grid.as_mut().expect("grid container").tracks = tracks;
+        }
+    }
+    // A grid container without any track declaration lays out in the single
+    // implicit column.
+    for style in out.iter_mut() {
+        if let Some(grid) = style.grid.as_mut() {
+            if grid.tracks.is_empty() {
+                grid.tracks.push(crate::css::GridTrack::Auto);
+            }
+        }
+    }
+}
+
+/// The grid declarations of one declaration block: the raw column text plus
+/// the spans. `important` is set when any of them carries `!important`.
+#[derive(Default)]
+struct GridDecls {
+    important: bool,
+    columns: Option<String>,
+    col_span: Option<u32>,
+    row_span: Option<u32>,
+}
+
+impl GridDecls {
+    fn is_empty(&self) -> bool {
+        self.columns.is_none() && self.col_span.is_none() && self.row_span.is_none()
+    }
+}
+
+fn grid_declarations(body: &str) -> GridDecls {
+    let mut decls = GridDecls::default();
+    for part in split_declarations(body) {
+        let Some((property, value)) = split_declaration(&part) else {
+            continue;
+        };
+        match property.trim().to_ascii_lowercase().as_str() {
+            "grid-template-columns" => {
+                let (value, important) = split_important(value);
+                decls.columns = Some(value.trim().to_string());
+                decls.important |= important;
+            }
+            "grid-column" => {
+                let (value, important) = split_important(value);
+                if let Some(span) = crate::css::parse_grid_span(value) {
+                    decls.col_span = Some(span);
+                    decls.important |= important;
+                }
+            }
+            "grid-row" => {
+                let (value, important) = split_important(value);
+                if let Some(span) = crate::css::parse_grid_span(value) {
+                    decls.row_span = Some(span);
+                    decls.important |= important;
+                }
+            }
+            _ => {}
+        }
+    }
+    decls
+}
+
+/// Calls `f` with the selector prelude and the declaration body of every
+/// style rule in `css`, recursing into rule-holding at-rules (`@media`,
+/// `@supports`, ...) the same way the gap rewrite does.
+fn for_each_style_rule(css: &str, f: &mut impl FnMut(&str, &str)) {
+    let bytes = css.as_bytes();
+    let mut i = 0usize;
+    'rules: while i < bytes.len() {
+        i = skip_trivia(bytes, i);
+        if i >= bytes.len() {
+            return;
+        }
+        if bytes[i] == b'}' {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        let block_start;
+        loop {
+            if j >= bytes.len() {
+                return;
+            }
+            match bytes[j] {
+                b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => {
+                    j = skip_comment(bytes, j);
+                    continue;
+                }
+                b'"' | b'\'' => {
+                    j = skip_string(bytes, j);
+                    continue;
+                }
+                b'{' => {
+                    block_start = j;
+                    break;
+                }
+                b';' => {
+                    // An at-rule without a block (`@import`, `@charset`).
+                    i = j + 1;
+                    continue 'rules;
+                }
+                b'}' => {
+                    i = j;
+                    continue 'rules;
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        let block_end = find_block_end(bytes, block_start);
+        let prelude = &css[i..block_start];
+        let body = &css[block_start + 1..block_end];
+        if at_rule_holds_rules(prelude) {
+            for_each_style_rule(body, f);
+        } else if !prelude.trim_start().starts_with('@') {
+            f(prelude, body);
+        }
+        i = block_end + 1;
+    }
+}
+
+/// Splits a declaration block on its top-level semicolons, keeping quoted
+/// strings and comments intact.
+fn split_declarations(body: &str) -> Vec<String> {
+    let bytes = body.as_bytes();
+    let mut parts = Vec::new();
+    let mut segment = 0usize;
+    let mut j = 0usize;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => {
+                j = skip_comment(bytes, j);
+                continue;
+            }
+            b'"' | b'\'' => {
+                j = skip_string(bytes, j);
+                continue;
+            }
+            b';' => {
+                parts.push(body[segment..j].to_string());
+                j += 1;
+                segment = j;
+                continue;
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    parts.push(body[segment..].to_string());
+    parts
+}
+
+/// The specificity of a selector, approximated the way the cascade needs it:
+/// ids (`#a`), classes/attributes/pseudo-classes (`.b`, `[c]`, `:d`), and
+/// type selectors (`div`). It only orders competing grid declarations.
+fn selector_specificity(selector: &str) -> (u32, u32, u32) {
+    let mut ids = 0u32;
+    let mut classes = 0u32;
+    let mut tags = 0u32;
+    // Pseudo-elements (`::before`) count as types, not classes.
+    let plain = selector.replace("::", "  ");
+    for chunk in plain.split(|c| matches!(c, ' ' | '>' | '+' | '~' | ',')) {
+        let chunk = chunk.trim();
+        if chunk.is_empty() || chunk == "*" {
+            continue;
+        }
+        ids += chunk.bytes().filter(|&b| b == b'#').count() as u32;
+        classes += chunk.bytes().filter(|&b| b == b'.').count() as u32;
+        classes += chunk.bytes().filter(|&b| b == b'[').count() as u32;
+        classes += chunk.bytes().filter(|&b| b == b':').count() as u32;
+        // A leading tag name: the chunk starts with a type selector unless
+        // it opens with an id, class, attribute, pseudo-class or universal.
+        if let Some(first) = chunk.chars().next() {
+            if first.is_ascii_alphabetic() {
+                tags += 1;
+            }
+        }
+    }
+    (ids, classes, tags)
+}
+
+// ---------------------------------------------------------------------------
 // Computed style -> css::Style
 // ---------------------------------------------------------------------------
 
@@ -1874,13 +2187,14 @@ unsafe fn map_style(
         CSS_DISPLAY_BLOCK
         | CSS_DISPLAY_LIST_ITEM
         | CSS_DISPLAY_TABLE
-        | CSS_DISPLAY_GRID => Display::Block,
+        | CSS_DISPLAY_GRID
+        | CSS_DISPLAY_INLINE_GRID => Display::Block,
         // A flex container is a block-level box: the engine has no
         // `Display::Flex` variant (the CSS spike matches `Display`
         // exhaustively), so the container keeps `Display::Block` and carries
         // its flex properties in `Style::flex`.
         CSS_DISPLAY_FLEX | CSS_DISPLAY_INLINE_FLEX => Display::Block,
-        // The block flow engine has no inline-block/inline-table/grid layout.
+        // The block flow engine has no inline-block/inline-table layout.
         // Inline-level displays stay inline runs, matching the legacy cascade's
         // mapping (only block/list-item/table/flex/grid become block boxes).
         CSS_DISPLAY_INLINE
@@ -1894,8 +2208,7 @@ unsafe fn map_style(
         | CSS_DISPLAY_TABLE_COLUMN_GROUP
         | CSS_DISPLAY_TABLE_COLUMN
         | CSS_DISPLAY_TABLE_CELL
-        | CSS_DISPLAY_TABLE_CAPTION
-        | CSS_DISPLAY_INLINE_GRID => Display::Inline,
+        | CSS_DISPLAY_TABLE_CAPTION => Display::Inline,
         // CSS_DISPLAY_INHERIT is resolved by compose before mapping.
         _ => Display::Inline,
     };
@@ -1903,6 +2216,22 @@ unsafe fn map_style(
     if matches!(display, CSS_DISPLAY_FLEX | CSS_DISPLAY_INLINE_FLEX) {
         out.flex = Some(flex_style(style, unit_ctx));
     }
+    if matches!(display, CSS_DISPLAY_GRID | CSS_DISPLAY_INLINE_GRID) {
+        // Like flex, a grid container keeps `Display::Block` and is marked
+        // here; the track list arrives in `apply_grid_styles`, which reads
+        // the properties libcss does not know.
+        out.display = Display::Block;
+        out.grid = Some(GridStyle::default());
+    }
+    out.grid_item = GridItem::default();
+    // The gaps travel in the min-width (row) and max-width (column)
+    // carriers for every element, not just flex containers: grid reuses the
+    // same values instead of re-parsing `gap`. See `flex_style`.
+    out.row_gap =
+        length_px(style, unit_ctx, css_computed_min_width, CSS_MIN_WIDTH_SET).unwrap_or(0.0);
+    out.column_gap = length_px(style, unit_ctx, css_computed_max_width, CSS_MAX_WIDTH_SET)
+        .or_else(|| length_px(style, unit_ctx, css_computed_column_gap, CSS_COLUMN_GAP_SET))
+        .unwrap_or(0.0);
     out.flex_item = flex_item(style, unit_ctx);
 
     out.width = length_px(style, unit_ctx, css_computed_width, CSS_WIDTH_SET);
@@ -2635,6 +2964,11 @@ fn compute_inner(
             css_stylesheet_destroy(sheet);
         }
     }
+
+    // Grid placement properties are invisible to libcss: they are read from
+    // the same author sheets here, after the cascade above fixed display.
+    let css_texts: Vec<&str> = sheets.iter().map(|input| input.css).collect();
+    apply_grid_styles(doc, &css_texts, &mut out);
 
     out
 }

@@ -270,8 +270,48 @@ pub struct FlexStyle {
     pub column_gap: f64,
 }
 
-/// The flex item properties of an element: `flex-grow`, `flex-shrink` and
-/// `flex-basis`.
+/// A grid container's track sizing function: one entry of
+/// `grid-template-columns` in the minimal grid (S8).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum GridTrack {
+    /// A definite length in CSS pixels (`100px`).
+    Px(f64),
+    /// A flexible fraction of the free space (`1fr`).
+    Fr(f64),
+    /// Sized to its content ([`GridTrack::Auto`]).
+    #[default]
+    Auto,
+}
+
+/// The grid container properties of an element.
+///
+/// A grid container is an element whose computed `display` is `grid` (or
+/// `inline-grid`, which the engine treats as a block-level grid container).
+/// Like flex containers it keeps `Display::Block` and is marked here instead;
+/// the track gaps travel in [`Style::row_gap`]/[`Style::column_gap`], which
+/// the CSS layer fills from the same carriers the flex gaps use.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GridStyle {
+    /// The explicit columns of `grid-template-columns`, in order. Empty
+    /// means the implicit single column.
+    pub tracks: Vec<GridTrack>,
+}
+
+/// The grid item properties of an element: how many tracks it spans.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridItem {
+    pub col_span: u32,
+    pub row_span: u32,
+}
+
+impl Default for GridItem {
+    fn default() -> Self {
+        GridItem {
+            col_span: 1,
+            row_span: 1,
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlexItem {
     pub grow: f64,
@@ -334,6 +374,20 @@ pub struct Style {
     /// The element's own flex item properties, used when the element is an
     /// item of a flex container.
     pub flex_item: FlexItem,
+    /// The grid container properties; `Some` when the element is a grid
+    /// container (`display: grid` or `display: inline-grid`). Like flex, a
+    /// grid container keeps `Display::Block` and is marked here instead.
+    pub grid: Option<GridStyle>,
+    /// The element's own grid item properties, used when the element is an
+    /// item of a grid container.
+    pub grid_item: GridItem,
+    /// The row gap between grid rows (and flex lines of a column container),
+    /// in CSS pixels. The CSS layer fills it from the same carriers the flex
+    /// gaps travel in; layout reuses it instead of re-parsing `gap`.
+    pub row_gap: f64,
+    /// The column gap between grid tracks (and flex items of a row
+    /// container), in CSS pixels. See [`Style::row_gap`].
+    pub column_gap: f64,
 }
 
 impl Default for Style {
@@ -357,6 +411,10 @@ impl Default for Style {
             inline_align: false,
             flex: None,
             flex_item: FlexItem::default(),
+            grid: None,
+            grid_item: GridItem::default(),
+            row_gap: 0.0,
+            column_gap: 0.0,
         }
     }
 }
@@ -519,6 +577,24 @@ fn apply(style: &mut Style, decl: &Declaration) {
                 "block" | "flex" | "grid" | "list-item" | "table" => Display::Block,
                 _ => Display::Inline,
             };
+            if value.trim() == "grid" && style.grid.is_none() {
+                style.grid = Some(GridStyle::default());
+            }
+        }
+        "grid-template-columns" => {
+            if let Some(tracks) = parse_grid_tracks(value) {
+                style.grid.get_or_insert_with(GridStyle::default).tracks = tracks;
+            }
+        }
+        "grid-column" => {
+            if let Some(span) = parse_grid_span(value) {
+                style.grid_item.col_span = span;
+            }
+        }
+        "grid-row" => {
+            if let Some(span) = parse_grid_span(value) {
+                style.grid_item.row_span = span;
+            }
         }
         "width" => style.width = parse_px(value),
         "height" => style.height = parse_px(value),
@@ -563,6 +639,117 @@ pub fn parse_px(value: &str) -> Option<f64> {
         .or_else(|| value.strip_suffix("pt"))
         .unwrap_or(value);
     number.parse::<f64>().ok()
+}
+
+/// Parses a `grid-template-columns` value into its tracks: `px` lengths, `fr`
+/// fractions, `auto`, and `repeat(n, track)` over a single track. Unknown
+/// tokens degrade to [`GridTrack::Auto`] so one typo never breaks the whole
+/// declaration; an empty track list is `None`.
+pub fn parse_grid_tracks(value: &str) -> Option<Vec<GridTrack>> {
+    let mut tracks = Vec::new();
+    for token in split_track_list(value) {
+        if let Some(expanded) = expand_repeat(&token) {
+            tracks.extend(expanded);
+        } else {
+            tracks.push(parse_grid_track(&token));
+        }
+    }
+    if tracks.is_empty() {
+        None
+    } else {
+        Some(tracks)
+    }
+}
+
+/// Splits a track list on whitespace outside parentheses, so
+/// `repeat(2, 100px)` stays one token.
+fn split_track_list(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    for ch in value.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                current.push(ch);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            c => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn parse_grid_track(token: &str) -> GridTrack {
+    let token = token.trim();
+    if token.eq_ignore_ascii_case("auto") {
+        return GridTrack::Auto;
+    }
+    if let Some(number) = token.strip_suffix("px").or_else(|| token.strip_suffix("PX")) {
+        if let Ok(px) = number.trim().parse::<f64>() {
+            if px.is_finite() && px >= 0.0 {
+                return GridTrack::Px(px);
+            }
+        }
+        return GridTrack::Auto;
+    }
+    if let Some(number) = token.strip_suffix("fr").or_else(|| token.strip_suffix("FR")) {
+        if let Ok(fr) = number.trim().parse::<f64>() {
+            if fr.is_finite() && fr > 0.0 {
+                return GridTrack::Fr(fr);
+            }
+        }
+        return GridTrack::Auto;
+    }
+    GridTrack::Auto
+}
+
+/// Expands `repeat(n, track)` over a single track; `None` when the token is
+/// not a repetition (nested or multi-track lists degrade to a single auto
+/// track instead of failing the declaration).
+fn expand_repeat(token: &str) -> Option<Vec<GridTrack>> {
+    let inner = token
+        .strip_prefix("repeat(")
+        .or_else(|| token.strip_prefix("REPEAT("))?;
+    let inner = inner.strip_suffix(')')?;
+    let (count, track) = inner.split_once(',')?;
+    let count: usize = count.trim().parse().ok()?;
+    if count == 0 || count > 1000 {
+        return Some(Vec::new());
+    }
+    if split_track_list(track).len() != 1 {
+        return Some(vec![GridTrack::Auto]);
+    }
+    Some(vec![parse_grid_track(track.trim()); count])
+}
+
+/// Parses a `grid-column`/`grid-row` value into the number of tracks it
+/// spans: the `N` in `span N` (a bare `span` spans one). Values without a
+/// span (`2`, `1 / 3`, `auto`) place instead of spanning and yield `None`,
+/// leaving the default span of one alone.
+pub fn parse_grid_span(value: &str) -> Option<u32> {
+    let mut words = value.split_whitespace();
+    loop {
+        let word = words.next()?;
+        if word.eq_ignore_ascii_case("span") {
+            let span = words
+                .next()
+                .and_then(|n| n.parse::<u32>().ok())
+                .unwrap_or(1);
+            return Some(span.clamp(1, 1000));
+        }
+    }
 }
 
 fn parse_box(value: &str) -> [f64; 4] {
