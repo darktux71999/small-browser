@@ -70,7 +70,7 @@ codeberg.org. Mirror Engram: pendiente.
 | T4 | Imágenes (`<img>`: fetch, decode, pintura en caja) | S3 | 2 | ✅ 011bfc6 (16 tests; logo de Codeberg pintando, SVG degradan con aviso) |
 | T5 | Medición de la Meta 1 + informe | S1,S6 | 3 | pendiente (parcialmente hecho: bandas medidas) |
 | T6 | Flex mínimo: contexto de formato flex en `layout.rs` (+ campos en `css::Style` y mapping) | S7 | 4 | ✅ 38f725e (9 tests; objetivo medible NO alcanzado: queda grid) |
-| T7 | Grid mínimo: contexto de formato grid (`layout.rs` + `css::Style` + mapping) | S8 | 4 | ⏸ worker colgado (~50 min sin escritura); sonda salvada en `/tmp/opencode/t7-salvage/`; reimplementar mañana |
+| T7 | Grid mínimo: contexto de formato grid (`layout.rs` + `css::Style` + mapping) | S8 | 4 | ✅ 77abd05 (worker muse-spark: 6 tests RED→GREEN; diferencial 53 idénticos, 5 = fixtures grid; assess: medium/under_budget) |
 | T8 | Scroll/viewport: ventana fija + offset de scroll + recorte al pintar | S9 | 4 | ✅ worker (16 tests RED→GREEN; 15 salidas byte-idénticas; commit pendiente tras el seam con T7) |
 
 Nota de planificación (aceptada): el bug de wrapping NO se arregla en la ruta de
@@ -205,3 +205,35 @@ sería bug de anchura de caja y se corrige ahí.
   (`src/shell.rs`, signal `shell_process`), 8 paths / 848 líneas → review nativo
   **pendiente**, diferido por parada explícita del usuario; primera acción de
   mañana (preflight STATUS con `--base-ref a059ef4 --committed-only`).
+- **L11** (2026-10-23): jornada del review + grid. (1) **Review nativo de
+  21d90d2 (T8): APROBADO y autoridad quemada** (`gentle-ai.review-acknowledged/v1`)
+  tras una corrección acotada: los lentes readability+reliability y el refutador
+  marcaron el mismo CRITICAL determinista (R2-001/R3-1: al mover la pintura a
+  `shell::run` desapareció la rama `browser-lite: paint failed: {err}` y un fallo
+  de Cairo se reportaba como `window failed`) — corregido en 8785891 con
+  `RunError::{Paint,Window}` + `diagnostic()`, exit code intacto, 2 pins
+  (forecast 80 líneas = reales 80). (2) **T7 grid entregado por worker
+  muse-spark** (tras cancelar el colgado de mimo): 6 tests RED→GREEN,
+  diferencial 53/5, commit 77abd05, assess `medium/under_budget` → sin review.
+  (3) **Descubrimiento de infraestructura**: el agente `review-validator`
+  apuntaba a `opencode-go/minimax-m3.1-flash-free` (modelo **retirado** del
+  proveedor) → `ModelUnavailableError` disfrazado de `provider_failed` en el
+  transporte; reparado a `opencode-go/mimo-v2.6-flash` (tier bajo del pool).
+  Lecciones: los rechazos `provider_failed` del transporte se miran en el log
+  de OpenCode (`level=ERROR`, `Failed to drain Session`); la selección
+  `intended-untracked` viaja en el flag de cada petición STATUS (schema
+  `gentle-ai.review-intended-untracked-selection/v1`, fuente en
+  `~/proyectos/gentle-ai/internal/cli/review_intended_untracked.go`); y la
+  reconstrucción de corrección committed-only exige **worktree limpio** (el
+  trabajo de grid se aparca con `git stash -u` durante la validación). (4)
+  **Medición Meta 1**: codeberg.org baja de 4048px a **3173px** (Firefox claro:
+  1901px) — grid restó 875px. Bandas 13–16 ya < 8% de diff; la brecha restante
+  está en héroe/banda azul (5–12: 40–65% → faltan fuentes reales y decoración
+  de caja) y en la altura del footer (17–23: más allá de la página de Firefox).
+  (5) **Avisos no bloqueantes del review** (trabajo posterior, nunca reabren
+  este candidato): R2-002 comentario obsoleto en `paint.rs:25-26`; R2-003 check
+  tautológico de viewport en `shell.rs:226-231`; R2-004 retorno sin usar de
+  `ScrollState::apply`; R2-005 ciclo de módulos paint⇄shell por las constantes
+  de viewport; R3-2 decode de eventos SDL sin test de offsets; R3-3
+  `fidelity-probe.py:capture_blitz` sigue capturando la ventana (recorte) en
+  vez de `--png` completo.
