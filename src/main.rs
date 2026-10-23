@@ -127,7 +127,7 @@ fn main() -> ExitCode {
             // viewport on the full-document layout and re-paints it on scroll.
             // `--png`/`--dump` above keep rendering the whole document.
             if let Err(err) = shell::run(&layout, &runtime.title(), frames) {
-                eprintln!("browser-lite: window failed: {err}");
+                eprintln!("{}", err.diagnostic());
                 return ExitCode::from(1);
             }
         }

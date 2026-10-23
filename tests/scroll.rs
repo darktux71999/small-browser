@@ -450,3 +450,19 @@ fn dump_mode_still_measures_the_full_1000x3200_document() {
         "boxes reach the document end, got max bottom {max_bottom}"
     );
 }
+
+// Review correction pins (R2-001/R3-1): the interactive path must keep its
+// stage-specific CLI diagnostics, so a paint failure stays distinguishable
+// from a window/SDL failure.
+
+#[test]
+fn paint_failures_keep_the_paint_diagnostic() {
+    let err = browser_lite::shell::RunError::Paint("boom".to_string());
+    assert_eq!(err.diagnostic(), "browser-lite: paint failed: boom");
+}
+
+#[test]
+fn window_failures_keep_the_window_diagnostic() {
+    let err = browser_lite::shell::RunError::Window("boom".to_string());
+    assert_eq!(err.diagnostic(), "browser-lite: window failed: boom");
+}

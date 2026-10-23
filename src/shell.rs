@@ -213,6 +213,31 @@ extern "C" {
     fn SDL_GetError() -> *const c_char;
 }
 
+/// A classified failure from the interactive window path, so the CLI keeps its
+/// stage-specific diagnostics: painting failures report as `paint failed` and
+/// SDL/window plumbing as `window failed`.
+pub enum RunError {
+    /// Painting the viewport failed (Cairo render path).
+    Paint(String),
+    /// Window, renderer, texture, or event plumbing failed (SDL path).
+    Window(String),
+}
+
+impl RunError {
+    /// The CLI diagnostic line for this failure, keeping the historical
+    /// `browser-lite: <stage> failed: {err}` messages.
+    pub fn diagnostic(&self) -> String {
+        match self {
+            RunError::Paint(err) => format!("browser-lite: paint failed: {err}"),
+            RunError::Window(err) => format!("browser-lite: window failed: {err}"),
+        }
+    }
+}
+
+fn window_error(what: &str) -> RunError {
+    RunError::Window(error(what))
+}
+
 /// Opens the fixed-viewport window on `layout` and runs the event loop until
 /// the window closes (or `max_frames` frames have been shown).
 ///
@@ -220,19 +245,19 @@ extern "C" {
 /// initial frame is the document top, and the scroll keys (arrows,
 /// PageUp/PageDown, Home/End, vi `j`/`k`/`g`/`G`) re-paint the window further
 /// down through [`ScrollState`]. `--png`/`--dump` never reach this path.
-pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), String> {
+pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), RunError> {
     let mut scroll = ScrollState::new(layout.height, f64::from(VIEWPORT_HEIGHT));
-    let mut frame = paint::render_viewport(layout, scroll.offset())?;
+    let mut frame = paint::render_viewport(layout, scroll.offset()).map_err(RunError::Paint)?;
     if frame.width != VIEWPORT_WIDTH || frame.height != VIEWPORT_HEIGHT {
-        return Err(format!(
+        return Err(RunError::Paint(format!(
             "viewport frame is {}x{}, expected {VIEWPORT_WIDTH}x{VIEWPORT_HEIGHT}",
             frame.width, frame.height
-        ));
+        )));
     }
 
     unsafe {
         if !SDL_Init(SDL_INIT_VIDEO) {
-            return Err(error("SDL_Init"));
+            return Err(window_error("SDL_Init"));
         }
 
         let c_title = CString::new(title).unwrap_or_default();
@@ -244,14 +269,14 @@ pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), 
         );
         if window.is_null() {
             SDL_Quit();
-            return Err(error("SDL_CreateWindow"));
+            return Err(window_error("SDL_CreateWindow"));
         }
 
         let renderer = SDL_CreateRenderer(window, std::ptr::null());
         if renderer.is_null() {
             SDL_DestroyWindow(window);
             SDL_Quit();
-            return Err(error("SDL_CreateRenderer"));
+            return Err(window_error("SDL_CreateRenderer"));
         }
 
         let texture = SDL_CreateTexture(
@@ -265,7 +290,7 @@ pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), 
             SDL_DestroyRenderer(renderer);
             SDL_DestroyWindow(window);
             SDL_Quit();
-            return Err(error("SDL_CreateTexture"));
+            return Err(window_error("SDL_CreateTexture"));
         }
 
         let pitch = frame.width * 4;
@@ -275,7 +300,7 @@ pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), 
             frame.pixels.as_ptr() as *const c_void,
             pitch,
         ) {
-            return Err(error("SDL_UpdateTexture"));
+            return Err(window_error("SDL_UpdateTexture"));
         }
 
         let mut frames = 0u32;
@@ -299,7 +324,14 @@ pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), 
                             if scroll.offset() != before {
                                 match paint::render_viewport(layout, scroll.offset()) {
                                     Ok(next) => frame = next,
-                                    Err(err) => return finish(texture, renderer, window, Err(err)),
+                                    Err(err) => {
+                                        return finish(
+                                            texture,
+                                            renderer,
+                                            window,
+                                            Err(RunError::Paint(err)),
+                                        )
+                                    }
                                 }
                                 if !SDL_UpdateTexture(
                                     texture,
@@ -311,7 +343,7 @@ pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), 
                                         texture,
                                         renderer,
                                         window,
-                                        Err(error("SDL_UpdateTexture")),
+                                        Err(window_error("SDL_UpdateTexture")),
                                     );
                                 }
                             }
@@ -322,7 +354,7 @@ pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), 
             }
 
             if !SDL_RenderClear(renderer) {
-                return Err(error("SDL_RenderClear"));
+                return Err(window_error("SDL_RenderClear"));
             }
             if !SDL_RenderTexture(
                 renderer,
@@ -330,7 +362,7 @@ pub fn run(layout: &Layout, title: &str, max_frames: Option<u32>) -> Result<(), 
                 std::ptr::null(),
                 std::ptr::null(),
             ) {
-                return Err(error("SDL_RenderTexture"));
+                return Err(window_error("SDL_RenderTexture"));
             }
             SDL_RenderPresent(renderer);
             frames += 1;
@@ -347,8 +379,8 @@ fn finish(
     texture: *mut SDL_Texture,
     renderer: *mut SDL_Renderer,
     window: *mut SDL_Window,
-    result: Result<(), String>,
-) -> Result<(), String> {
+    result: Result<(), RunError>,
+) -> Result<(), RunError> {
     unsafe {
         SDL_DestroyTexture(texture);
         SDL_DestroyRenderer(renderer);
