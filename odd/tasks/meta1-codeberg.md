@@ -270,3 +270,18 @@ sería bug de anchura de caja y se corrige ahí.
   comportamiento block; R3-6 contratos de degradación sin tests de frontera;
   R3-7 el test del decode SDL es autorreferencial y el fix del bucle no tiene
   test; R3-8 `css::apply` marca grid por `grid-template-columns` sin `display`.
+- **L14** (2026-10-23): **bug de la orilla corregido** (reporte del usuario:
+  «tenemos inconsistencia en el redimensionado de la pagina entre letras salidas
+  o en la orilla de la ventana»). Raíz = R3-4 del review confirmado en vivo: los
+  ítems que son contexto flex/grid **anidado** se maquetaban con el ancho
+  disponible del padre en vez de su celda (`layout_node` despachaba a
+  `layout_flex_container`/`layout_grid_container` con `Forced::default()`), lo
+  que empujaba grupos enteros fuera del lienzo («Sign in» en x=1068, «Register
+  now.» en x=1414). Fix 14a5ad8: enhebrar `forced` hasta los contextos anidados
+  (honrado por `content_box` como la rama de bloque); pins: flex-en-flex
+  content-sized, flex-en-grid = su celda de 200px (RED 960/1000 → GREEN).
+  Efecto medido: desbordes del lienzo en codeberg.org **25 → 4** (los 4
+  restantes son cosméticos: «Register» 22px por padding derecho y 3 tarjetas a
+  2px → cola de pulido). Diferencial byte-a-byte (base HEAD~1 vs actual sobre
+  los 59 fixtures): **58 idénticos, 1 distinto** (`nested-contexts.html`, el
+  fixture nuevo que ejercita la regla) → **0 regresiones**. Risk: none.
