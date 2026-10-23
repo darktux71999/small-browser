@@ -250,3 +250,23 @@ sería bug de anchura de caja y se corrige ahí.
   `Risk: item 6` (el consumo de eventos en el bucle FFI no es testeable
   automáticamente; aceptación = prueba de teclado real) → verificador
   independiente lanzado (mimo-v2.6-flash) sobre el wiring del bucle.
+- **L13** (2026-10-23): **review del slice (grid+scroll+docs): APROBADO y quemado**
+  (lineage `review-8aa397f463c8623b`, target `bd57ba40…`) — sin CRITICAL: no
+  hubo refutador ni corrección. Modelos diversificados por tarea a petición del
+  usuario («si diversifica por las tareas solo no toques el orquestador»):
+  risk→mimo-v2.6-flash, resilience→muse-spark-1.3-contributor,
+  readability→deepseek-v4.1-flash, reliability→mimo-v2.6-flash,
+  refuter→muse-spark-1.3-contributor, validator→deepseek-v4.1-flash
+  (orquestador y modelo raíz intactos). **Avisos del review** (trabajo posterior
+  separado, no reabren el candidato): R2-1 flag grid se pone y no se limpia +
+  «grid container» decidido en 3 sitios; R2-2 cap 1000 duplicado en 3 sitios;
+  R2-3 columna implícita en 2 capas; R2-4 mezcla de orígenes en el Bid del
+  merge; R2-5 cascada manual duplicada; R2-6 doble marcador de ítem anónimo;
+  R3-1 **row-span no aporta alto de fila** (grid colapsa si solo hay spanning
+  items); R3-2 **min-width/max-width legítimos se confunden con gap** (carriers)
+  y `column-gap` real queda ensombrecido; R3-3 la cascada grid ignora condiciones
+  `@media`/`@supports` y `!important` es por bloque; R3-4 ítems grid que son
+  flex/grid anidados ignoran el ancho de su celda; R3-5 `inline-grid` pasa a
+  comportamiento block; R3-6 contratos de degradación sin tests de frontera;
+  R3-7 el test del decode SDL es autorreferencial y el fix del bucle no tiene
+  test; R3-8 `css::apply` marca grid por `grid-template-columns` sin `display`.
