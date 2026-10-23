@@ -72,7 +72,7 @@ codeberg.org. Mirror Engram: pendiente.
 | T6 | Flex mínimo: contexto de formato flex en `layout.rs` (+ campos en `css::Style` y mapping) | S7 | 4 | ✅ 38f725e (9 tests; objetivo medible NO alcanzado: queda grid) |
 | T7 | Grid mínimo: contexto de formato grid (`layout.rs` + `css::Style` + mapping) | S8 | 4 | ✅ 77abd05 (worker muse-spark: 6 tests RED→GREEN; diferencial 53 idénticos, 5 = fixtures grid; assess: medium/under_budget) |
 | T8 | Scroll/viewport: ventana fija + offset de scroll + recorte al pintar | S9 | 4 | ✅ worker (16 tests RED→GREEN; 15 salidas byte-idénticas; commit pendiente tras el seam con T7) |
-| T9 | `background-image` mínimo (url, repeat, posición) — las montañas del héroe | S10 | 4 | delegado (mimo-v2.6-flash) |
+| T9 | `background-image` mínimo (url, repeat, posición) — las montañas del héroe | S10 | 4 | ✅ (6 tests RED→GREEN; diferencial 58 idénticos + 3 fixtures nuevos; codeberg: montañas pintando) |
 
 Nota de planificación (aceptada): el bug de wrapping NO se arregla en la ruta de
 texto actual porque T3 la reemplaza; si tras Pango persistieran líneas cortadas,
@@ -286,3 +286,20 @@ sería bug de anchura de caja y se corrige ahí.
   2px → cola de pulido). Diferencial byte-a-byte (base HEAD~1 vs actual sobre
   los 59 fixtures): **58 idénticos, 1 distinto** (`nested-contexts.html`, el
   fixture nuevo que ejercita la regla) → **0 regresiones**. Risk: none.
+- **L15** (2026-10-23): **T9 `background-image` entregado** (worker mimo-v2.6-flash):
+  url() resuelta en parse por libcss (absoluta contra la hoja), fetch/decode
+  reusando `img.rs`, pintado detrás del contenido con mosaico a tamaño natural
+  (`repeat` desde el origen de la caja, recorte a la cja, alpha intacto vía
+  `rgba_surface`). Hallazgo FFI: `css_computed_background_image` devuelve 0x1
+  tanto para NONE como para IMAGE — la única señal de «sin imagen» es el
+  `lwc_string*` NULL. **Codeberg: las montañas translúcidas del héroe pintan**
+  (banda del héroe 12.2% de píxeles cambiados, brillo medio 0.971→0.849, teal
+  `srgb(148,203,200)` sustituyendo al blanco) y también el fondo de la sección
+  de estadísticas. Diferencial: 58 idénticos + 3 fixtures nuevos + 1 delta de
+  stderr esperado (fixture que declara background-image con SVG no soportado);
+  0 regresiones. Suites: 165 passed / 0 failed. `Risk: none`. Pendiente de S10:
+  `background-position`, `background-size`, `border`, `border-radius`; nota
+  menor: las hojas inline `style=""` usan base sintética
+  `browser-lite://inline/{id}` y sus URLs relativas de fondo no resuelven
+  (aviso honesto, sin cambio de píxeles). Limpieza: /tmp (tmpfs 1GiB) se llenó
+  con el scratch del worker — builds de scratch van al disco de home.

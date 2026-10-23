@@ -34,6 +34,10 @@ pub struct LayoutBox {
     pub text: Option<String>,
     pub color: crate::css::Color,
     pub background: Option<crate::css::Color>,
+    /// Decoded `background-image` pixels (S10), painted as the tiled box
+    /// background behind the content; `None` when the element has no usable
+    /// background image.
+    pub background_image: Option<Rc<Image>>,
     pub font_size: f64,
     pub bold: bool,
     pub centered: bool,
@@ -79,9 +83,10 @@ pub fn layout(doc: &Document, styles: &[Style], viewport_width: f64) -> Layout {
     layout_with_images(doc, styles, viewport_width, &ImageSet::empty())
 }
 
-/// Lays `doc` out with its `<img>` subresources fetched and decoded.
+/// Lays `doc` out with its `<img>` subresources and its `background-image`
+/// URLs (S10) fetched and decoded.
 ///
-/// `base` resolves relative `src` like the stylesheet loader does: the final
+/// `base` resolves relative URLs like the stylesheet loader does: the final
 /// document URL for http(s) pages, the containing directory for local files.
 /// Failures degrade to empty boxes and warnings; they never abort the render.
 pub fn layout_with_subresources(
@@ -90,7 +95,7 @@ pub fn layout_with_subresources(
     viewport_width: f64,
     base: &str,
 ) -> Layout {
-    let images = ImageSet::load(doc, base);
+    let images = ImageSet::load(doc, base).load_background_images(styles, base);
     layout_with_images(doc, styles, viewport_width, &images)
 }
 
@@ -199,6 +204,10 @@ fn layout_node(
         text: None,
         color: style.color,
         background: style.background,
+        background_image: style
+            .background_image
+            .as_deref()
+            .and_then(|url| images.background(url)),
         font_size: style.font_size,
         bold: style.bold,
         centered: style.inline_align,
@@ -378,6 +387,10 @@ fn layout_flex_container(
         text: None,
         color: style.color,
         background: style.background,
+        background_image: style
+            .background_image
+            .as_deref()
+            .and_then(|url| images.background(url)),
         font_size: style.font_size,
         bold: style.bold,
         centered: style.inline_align,
@@ -573,6 +586,7 @@ fn layout_flex_container(
                 text: None,
                 color: item.style.color,
                 background: None,
+                background_image: None,
                 font_size: item.style.font_size,
                 bold: item.style.bold,
                 centered: false,
@@ -917,6 +931,10 @@ fn layout_grid_container(
         text: None,
         color: style.color,
         background: style.background,
+        background_image: style
+            .background_image
+            .as_deref()
+            .and_then(|url| images.background(url)),
         font_size: style.font_size,
         bold: style.bold,
         centered: style.inline_align,
@@ -1035,6 +1053,7 @@ fn layout_grid_container(
                 text: None,
                 color: item.style.color,
                 background: None,
+                background_image: None,
                 font_size: item.style.font_size,
                 bold: item.style.bold,
                 centered: false,
@@ -1412,6 +1431,10 @@ fn layout_image(
         text: None,
         color: style.color,
         background: style.background,
+        background_image: style
+            .background_image
+            .as_deref()
+            .and_then(|url| images.background(url)),
         font_size: style.font_size,
         bold: style.bold,
         centered: style.inline_align,
@@ -1542,6 +1565,7 @@ fn flush_text(
             text: Some(line.text.clone()),
             color: style.color,
             background: None,
+            background_image: None,
             font_size: style.font_size,
             bold: style.bold,
             centered: false,

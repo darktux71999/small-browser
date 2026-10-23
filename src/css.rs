@@ -353,6 +353,12 @@ pub struct Style {
     pub padding: [f64; 4],
     pub color: Color,
     pub background: Option<Color>,
+    /// The `background-image` URL (S10). The libcss path hands it resolved
+    /// against the sheet's own URL (its `resolve` callback runs at parse
+    /// time); the legacy cascade keeps it as authored. The loader resolves
+    /// anything still relative against the document base, like `<img src>`.
+    /// `None` when the element declares no image (`none` or absent).
+    pub background_image: Option<String>,
     pub font_size: f64,
     // Typography, populated by the libcss path. `bold` and `inline_align` stay
     // for layout/paint compatibility and mirror weight >= 600 and centred text.
@@ -400,6 +406,7 @@ impl Default for Style {
             padding: [0.0; 4],
             color: Color::BLACK,
             background: None,
+            background_image: None,
             font_size: 16.0,
             font_family: String::from("Sans"),
             font_weight: 400,
@@ -616,9 +623,24 @@ fn apply(style: &mut Style, decl: &Declaration) {
                 style.color = c;
             }
         }
-        "background" | "background-color" => {
+        "background" => {
             if let Some(c) = parse_color(value) {
                 style.background = Some(c);
+            }
+            if let Some(url) = parse_url(value) {
+                style.background_image = Some(url);
+            }
+        }
+        "background-color" => {
+            if let Some(c) = parse_color(value) {
+                style.background = Some(c);
+            }
+        }
+        "background-image" => {
+            if value.eq_ignore_ascii_case("none") {
+                style.background_image = None;
+            } else if let Some(url) = parse_url(value) {
+                style.background_image = Some(url);
             }
         }
         "font-size" => {
@@ -749,6 +771,32 @@ pub fn parse_grid_span(value: &str) -> Option<u32> {
                 .unwrap_or(1);
             return Some(span.clamp(1, 1000));
         }
+    }
+}
+
+/// Parses a `url(...)` token into the URL as authored, with or without
+/// quotes. The token sits alone in the value in the cases that matter here
+/// (`background-image`, or a shorthand's `url(...)`); anything that is not
+/// exactly one `url(...)` is not a URL.
+fn parse_url(value: &str) -> Option<String> {
+    let v = value.trim().as_bytes();
+    if v.len() < 5 || !v[..4].eq_ignore_ascii_case(b"url(") || v.last() != Some(&b')') {
+        return None;
+    }
+    let inner = std::str::from_utf8(&v[4..v.len() - 1]).ok()?.trim();
+    let url = if inner.len() >= 2
+        && ((inner.starts_with('"') && inner.ends_with('"'))
+            || (inner.starts_with('\'') && inner.ends_with('\'')))
+    {
+        &inner[1..inner.len() - 1]
+    } else {
+        inner
+    };
+    let url = url.trim();
+    if url.is_empty() {
+        None
+    } else {
+        Some(url.to_string())
     }
 }
 

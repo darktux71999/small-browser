@@ -74,3 +74,6 @@ Módulos de aplicación listos: `tabs` (pestañas + historial), `cookies`,
 bubblewrap). Próximo corte: migrar el texto a Pango (interlineado,
 justificación, tracking, `@font-face` vía fontconfig), reutilizando
 `spikes/css/src/render.rs` como referencia.
+# `background-image` se pinta con mosaico a tamaño natural desde el origen de
+# la caja (repeat por defecto, alpha preservado). `background-position`,
+# `background-size`, `border` y `border-radius` siguen pendientes.

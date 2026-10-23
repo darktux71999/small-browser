@@ -90,6 +90,11 @@ fn draw(surface: &ImageSurface, layout: &Layout, scroll: Option<f64>) -> Result<
             cr.rectangle(b.x, b.y, b.w, b.h);
             cr.fill().map_err(|e| e.to_string())?;
         }
+        // `background-image` (S10) goes over the background colour, clipped
+        // to the same box, still below every piece of content.
+        if let Some(image) = &b.background_image {
+            draw_background_image(&cr, b, image)?;
+        }
     }
 
     // Decoded `<img>` pixels, scaled into their layout box.
@@ -143,6 +148,31 @@ fn draw_image(cr: &Context, b: &LayoutBox, image: &Image) -> Result<(), String> 
     cr.clip();
     cr.translate(b.x, b.y);
     cr.scale(b.w / f64::from(image.width), b.h / f64::from(image.height));
+    cr.set_source(&pattern).map_err(|e| e.to_string())?;
+    cr.paint().map_err(|e| e.to_string())?;
+    cr.restore().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Draws one `background-image` (S10): the image repeats at its natural size
+/// from the box's top-left corner (the CSS `repeat` default), clipped to the
+/// box and composited over the background colour. `background-position`,
+/// `background-size` and the non-repeating values are not part of the minimal
+/// slice.
+fn draw_background_image(cr: &Context, b: &LayoutBox, image: &Image) -> Result<(), String> {
+    if b.w <= 0.0 || b.h <= 0.0 || image.width == 0 || image.height == 0 {
+        return Ok(());
+    }
+    let surface = rgba_surface(image)?;
+    let pattern = cairo::SurfacePattern::create(&surface);
+    // Tiles land at natural size (no scaling), so nearest keeps exact pixels.
+    pattern.set_filter(cairo::Filter::Nearest);
+    pattern.set_extend(cairo::Extend::Repeat);
+
+    cr.save().map_err(|e| e.to_string())?;
+    cr.rectangle(b.x, b.y, b.w, b.h);
+    cr.clip();
+    cr.translate(b.x, b.y);
     cr.set_source(&pattern).map_err(|e| e.to_string())?;
     cr.paint().map_err(|e| e.to_string())?;
     cr.restore().map_err(|e| e.to_string())?;

@@ -104,6 +104,12 @@ const CSS_COLOR_COLOR: u8 = 0x01;
 const CSS_BACKGROUND_COLOR_COLOR: u8 = 0x01;
 const CSS_BACKGROUND_COLOR_CURRENT_COLOR: u8 = 0x02;
 
+// css_background_image_e: NONE and IMAGE deliberately share the value 0x1;
+// the caller tells them apart by whether the URL out-parameter is NULL
+// (libcss 0.9.2, /usr/include/libcss/properties.h). INHERIT never reaches a
+// composed style.
+const CSS_BACKGROUND_IMAGE_INHERIT: u8 = 0x0;
+
 // css_font_family_e
 const CSS_FONT_FAMILY_SERIF: u8 = 0x1;
 const CSS_FONT_FAMILY_SANS_SERIF: u8 = 0x2;
@@ -606,6 +612,10 @@ extern "C" {
     ) -> u8;
     fn css_computed_color(style: *const CssComputedStyle, color: *mut CssColor) -> u8;
     fn css_computed_background_color(style: *const CssComputedStyle, color: *mut CssColor) -> u8;
+    fn css_computed_background_image(
+        style: *const CssComputedStyle,
+        url: *mut *mut LwcString,
+    ) -> u8;
     fn css_computed_font_family(
         style: *const CssComputedStyle,
         names: *mut *mut *mut LwcString,
@@ -2274,6 +2284,18 @@ unsafe fn map_style(
         CSS_BACKGROUND_COLOR_CURRENT_COLOR => Some(out.color),
         _ => None,
     };
+
+    // libcss resolved the URL against the sheet's own URL at parse time (the
+    // `resolve` callback; see `cb_resolve`), so for a local or http page it
+    // is already absolute — like the font-family string, it is borrowed from
+    // the computed style. NONE and IMAGE share the return value, so the NULL
+    // out-parameter is what says "no image".
+    let mut background_url: *mut LwcString = ptr::null_mut();
+    if css_computed_background_image(style, &mut background_url) != CSS_BACKGROUND_IMAGE_INHERIT
+        && !background_url.is_null()
+    {
+        out.background_image = Some(String::from_utf8_lossy(lwc_bytes(background_url)).into_owned());
+    }
 
     let mut families: *mut *mut LwcString = ptr::null_mut();
     let family_type = css_computed_font_family(style, &mut families);

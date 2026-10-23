@@ -4,7 +4,8 @@
 //! against its final document URL, a local page against the directory of the
 //! file. Every URL is fetched and decoded once per run and the result —
 //! including a failure — is cached, so a page that repeats a logo costs one
-//! request.
+//! request. `background-image` URLs (S10) ride the same fetch/decode/cache
+//! machinery through [`ImageSet::load_background_images`].
 //!
 //! Decoding is headless (no X or Wayland display): gdk-pixbuf's built-in
 //! PNG/JPEG/GIF loaders for those formats and libwebp for WebP. SVG is not
@@ -22,6 +23,7 @@ use std::time::Duration;
 
 use url::Url;
 
+use crate::css::Style;
 use crate::dom::{Document, NodeId};
 
 /// Hard cap on one image body. A body larger than this is rejected, not
@@ -75,6 +77,11 @@ impl Default for ImageLimits {
 pub struct ImageSet {
     /// Nodes that referenced a resource, mapped to its resolved URL.
     urls: HashMap<NodeId, String>,
+    /// `background-image` URL (as the style carries it: sheet-resolved by
+    /// libcss, as authored by the legacy cascade) to its image; `None` caches
+    /// a failure. Keyed by that URL because every element that writes the
+    /// same URL shares one fetch through the resolved-URL cache below.
+    backgrounds: HashMap<String, Option<Rc<Image>>>,
     /// Resolved URL to its image; `None` caches a failure so it is not retried.
     cache: HashMap<String, Option<Rc<Image>>>,
     /// Unique URLs that were attempted (successful or not).
@@ -122,6 +129,51 @@ impl ImageSet {
         self.urls
             .get(&node)
             .and_then(|url| self.cache.get(url))
+            .and_then(|image| image.clone())
+    }
+
+    /// Fetch and decode the `background-image` URLs of `styles` on top of the
+    /// `<img>` images (S10), resolving them against `base` exactly like
+    /// `<img src>` and sharing the same per-URL cache: a page that references
+    /// the same file as an `<img>` and as a background decodes it once.
+    pub fn load_background_images(self, styles: &[Style], base: &str) -> ImageSet {
+        self.load_background_images_with_limits(styles, base, ImageLimits::default())
+    }
+
+    /// [`ImageSet::load_background_images`] with explicit limits, so tests can
+    /// drive the caps.
+    pub fn load_background_images_with_limits(
+        mut self,
+        styles: &[Style],
+        base: &str,
+        limits: ImageLimits,
+    ) -> ImageSet {
+        for style in styles {
+            let Some(raw) = style.background_image.as_deref() else {
+                continue;
+            };
+            if self.backgrounds.contains_key(raw) {
+                continue;
+            }
+            let loaded = match join_url(base, raw) {
+                Some(url) => self.load_url(&url, &limits).clone(),
+                None => {
+                    self.warn(format!(
+                        "skipping background image {raw:?}: cannot resolve it against {base:?}"
+                    ));
+                    None
+                }
+            };
+            self.backgrounds.insert(raw.to_string(), loaded);
+        }
+        self
+    }
+
+    /// The decoded image behind a `background-image` URL as the style
+    /// carries it, or `None` when it was never requested or failed to load.
+    pub fn background(&self, raw_url: &str) -> Option<Rc<Image>> {
+        self.backgrounds
+            .get(raw_url)
             .and_then(|image| image.clone())
     }
 
