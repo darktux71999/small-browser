@@ -73,6 +73,7 @@ codeberg.org. Mirror Engram: pendiente.
 | T7 | Grid mínimo: contexto de formato grid (`layout.rs` + `css::Style` + mapping) | S8 | 4 | ✅ 77abd05 (worker muse-spark: 6 tests RED→GREEN; diferencial 53 idénticos, 5 = fixtures grid; assess: medium/under_budget) |
 | T8 | Scroll/viewport: ventana fija + offset de scroll + recorte al pintar | S9 | 4 | ✅ worker (16 tests RED→GREEN; 15 salidas byte-idénticas; commit pendiente tras el seam con T7) |
 | T9 | `background-image` mínimo (url, repeat, posición) — las montañas del héroe | S10 | 4 | ✅ (6 tests RED→GREEN; diferencial 58 idénticos + 3 fixtures nuevos; codeberg: montañas pintando) |
+| T10 | Tipografía real: resolución de lista de familias + keywords genéricas + `@font-face` (ttf/otf) | Pareto #4 | 4 | delegado (mimo-v2.6-flash) |
 
 Nota de planificación (aceptada): el bug de wrapping NO se arregla en la ruta de
 texto actual porque T3 la reemplaza; si tras Pango persistieran líneas cortadas,
