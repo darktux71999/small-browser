@@ -338,3 +338,4 @@ sería bug de anchura de caja y se corrige ahí.
   **instalación de fuentes para después** («Dejarlo para después») — la
   maquinaria queda lista; al instalar paquetes (ttf-liberation/ttf-dejavu/
   noto-fonts) la tipografía real se verá sin más cambios de código.
+| T11 | `border` (ancho/estilo/color por lado) + `border-radius` uniforme — resto de S10 | S10 | 4 | delegado (muse-spark-1.3-contributor) |
