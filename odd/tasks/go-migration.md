@@ -37,7 +37,7 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
 | T4a | `text` (shaper Pango) + `layout` bloque/caja/runs | S3,S1 | 2 | ✅ (17 tests; diferencial humo 14 fixtures idénticos) |
 | T4b | `layout`: contexto flex (fila/columna, wrap, gap, grow, justify, align) | S3,S1 | 2 | ✅ (19 tests: 10 flex espejo de tests/flex.rs + 9 previos) |
 | T4c | `layout`: contexto grid (px/fr/auto/repeat, span, gap) | S3,S1 | 2 | ✅ (27 tests layout: 8 grid + 10 flex + 9 block) |
-| T5 | `paint`: Cairo via cgo + CLI `--png`/`--dump` | S1,S3 | 3 | pendiente |
+| T5 | `paint`: Cairo via cgo + CLI `--png`/`--dump` | S1,S3 | 3 | ✅ (**71 PNG byte-idénticos** al oráculo; 60/71 fixtures idénticos en las 6 cadenas) |
 | T6 | `shell`: SDL3 via cgo (headers reales, sin offsets a mano) + scroll | S3 | 3 | pendiente |
 | T7 | Tests portados + diferencial completo + paridad Meta 1 | S4,S5,S7 | 4 | pendiente |
 
@@ -114,3 +114,22 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   `flex_view_of` del oráculo) para reusar todos los helpers de medida. 8 tests
   espejo (6 en RED antes), 27 en total en layout; módulo entero verde; vet/
   race/gofmt limpios. `Risk: none`.
+- **L7** (2026-10-24): **T5 paint+CLI entregado** — el port tiene pipeline
+  completo (fetch→parse→cascade→layout→paint→CLI). `go/paint` (Cairo +
+  pango_cairo via cgo, orden de pintado idéntico al oráculo: fondo → imagen
+  tiled con alpha → anillos con clip redondeado → imágenes escaladas → runs de
+  texto a 72dpi, viewport con scroll, PNG con la semántica de errores del
+  oráculo) y `go/cmd/browser-lite` (CLI `--dump`/`--png` byte-compatibles,
+  más el loader de subrecursos: hojas `<link>`, expansión `@import`, registro
+  `@font-face`). **Hito de la S1: los 71 PNG del corpus son byte-idénticos
+  entre Go y Rust** (verificado por el padre con el runner). Diferencial:
+  **60/71 idénticos en las 6 cadenas**; las 11 diferencias son de dominio
+  conocido: 8+ por ausencia del runtime QuickJS (los scripts no se evalúan:
+  faltan líneas `js error` y títulos mutados por JS — el PNG coincide igual),
+  1 por el texto de error del decoder de imágenes (go/img dice «Image type not
+  supported» donde gdk-pixbuf dice «Unrecognized image file format») y 1 por
+  mayúsculas de tags SVG en el dump (go/dom preserva `linearGradient`, el
+  oráculo lo minusculiza). **Pendientes de paridad** (pequeños): texto del
+  decoder, caso de tags extranjeros, runtime JS (T7+), y la ventana interactiva
+  (T6, placeholder con error hasta ahora). 14 tests nuevos (9 paint + 5 CLI);
+  9 paquetes verdes; vet/race/gofmt limpios. `Risk: none`.
