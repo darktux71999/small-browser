@@ -358,3 +358,21 @@ sería bug de anchura de caja y se corrige ahí.
   `Risk: none`. Pendientes medidos: var()/custom properties (el desbloqueo),
   rem/em en el lector de radios (los botones usan `.28571429rem`),
   background-position/size (resto de T9).
+- **L19** (2026-10-23/24): **review en cadena del slice 497b1f7..HEAD: 3/3
+  APROBADOS y quemados**. El slice acumulado (38 archivos/4.611 líneas) excedía
+  el presupuesto del revisor (`lens_context_budget_exceeded`, nada creado) →
+  receta del proveedor: candidatos más pequeños encadenados. Cada commit se
+  revisó en su propio worktree temporal: **cándidato 1** = T10 tipografía
+  (15 archivos/1.360 líneas, riesgo medium — aprobado; 1 BLOCKER del lente
+  reliability sobre la caché de familias **refutado** por el refutador; avisos:
+  vocabulario de genéricas duplicado, walkers a sincronizar, contrato de avisos
+  a medio hacer, token_args=substring); **cándidato 2** = T1 fundación Go
+  (7/1.065, high por el runner que lanza procesos — aprobado tras 1 reintento
+  del lente reliability por `reviewer_result_not_admissible`; 12 avisos de
+  legibilidad/cobertura); **cándidato 3** = T11 bordes (11/1.436, medium —
+  aprobado; 11 avisos: 4 implementaciones de la expansión 1-4 valores, la
+  lista thin/medium/thick en dos módulos, el predicado de visibilidad del anillo
+  triplicado, y huecos de test en keywords/entradas inválidas/ramas de img).
+  Lecciones: los worktrees temporales por commit eliminan además el roce del
+  untracked; el presupuesto de contexto del revisor obliga a revisar por debajo
+  de ~1.500-2.000 líneas por candidato.
