@@ -90,7 +90,13 @@ func (d *Document) walk(n *html.Node, parent NodeID) {
 		for _, a := range n.Attr {
 			attrs[a.Key] = a.Val
 		}
-		id := d.push(n.Data, false, true, parent, attrs, "")
+		// Mirror the oracle's parse-time rule: src/dom.rs walk_children
+		// stores lexbor's local name, which arrives already lowercased —
+		// including foreign-element tags (linearGradient → lineargradient,
+		// fixture probe-svg-gradient). x/net/html keeps the spec camelCase
+		// for SVG/MathML, so lowercase ASCII here. Matching stays
+		// case-insensitive (equalFoldASCII), so queries are unaffected.
+		id := d.push(asciiLower(n.Data), false, true, parent, attrs, "")
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			d.walk(c, id)
 		}
@@ -265,6 +271,22 @@ func parseSelector(selector string) []compound {
 		chain = append(chain, c)
 	}
 	return chain
+}
+
+// asciiLower lowercases ASCII uppercase in place, mirroring lexbor's
+// local-name rule for tags (the oracle stores tags already lowercase at
+// parse time; Unicode folds never apply to tag names).
+func asciiLower(s string) string {
+	if strings.IndexFunc(s, func(r rune) bool { return 'A' <= r && r <= 'Z' }) < 0 {
+		return s
+	}
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // equalFoldASCII reports ASCII case-insensitive equality, like the oracle's

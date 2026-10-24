@@ -276,11 +276,17 @@ func Decode(body []byte) (*Image, error) {
 	src, _, err := image.Decode(bytes.NewReader(body))
 	if err != nil {
 		if errors.Is(err, image.ErrFormat) {
-			// The user-visible text of the oracle's format sniffing:
-			// gdk-pixbuf reports "Image type not supported" for a body no
-			// loader claims.
-			return nil, errors.New("Image type not supported")
+			// The user-visible text of the oracle's format sniffing: when
+			// no loader claims the body, gdk-pixbuf fails the write with
+			// "Unrecognized image file format" (observed oracle stderr on
+			// img-notimage.png; src/img.rs surfaces the GError message).
+			return nil, errors.New("Unrecognized image file format")
 		}
+		// A body a decoder claims but cannot finish: surface the decoder's
+		// message, the same rule as the oracle's GError passthrough
+		// (src/img.rs pixbuf::decode take_error). The text itself is
+		// engine-specific (gdk-pixbuf vs Go stdlib, e.g. truncated PNG:
+		// "Premature end-of-file encountered" vs "unexpected EOF").
 		return nil, err
 	}
 	return imageFrom(src)

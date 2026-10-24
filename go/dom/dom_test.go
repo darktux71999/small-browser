@@ -21,6 +21,33 @@ func TestParseBuildsHTML5Tree(t *testing.T) {
 	}
 }
 
+// Mirrors the oracle's parse-time rule (src/dom.rs walk_children takes
+// lexbor's local name, which arrives already lowercased): foreign-element
+// tags with spec camelCase (linearGradient, radialGradient, foreignObject)
+// are stored lowercase, so the --dump text matches the oracle byte for
+// byte (fixture probe-svg-gradient).
+func TestParseLowercasesForeignElementTags(t *testing.T) {
+	doc := dom.Parse(`<svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="lin"><stop/></linearGradient><radialGradient id="rad"/></defs><foreignObject><div>x</div></foreignObject></svg>`)
+	for _, want := range []string{"lineargradient", "radialgradient", "foreignobject", "stop", "defs"} {
+		found := false
+		for _, n := range doc.Nodes {
+			if !n.IsText && n.Tag == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("no stored tag %q (foreign-element case not lowercased)", want)
+		}
+	}
+	// The camelCase spellings must not survive anywhere in the arena.
+	for _, n := range doc.Nodes {
+		if !n.IsText && (n.Tag == "linearGradient" || n.Tag == "radialGradient" || n.Tag == "foreignObject") {
+			t.Fatalf("stored tag %q keeps foreign camelCase", n.Tag)
+		}
+	}
+}
+
 func TestTreeParentAndChildren(t *testing.T) {
 	doc := dom.Parse("<body><p>one</p><p>two</p></body>")
 	if doc.Nodes[doc.Root].Tag != "#document" {

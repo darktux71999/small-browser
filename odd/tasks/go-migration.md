@@ -39,7 +39,7 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
 | T4c | `layout`: contexto grid (px/fr/auto/repeat, span, gap) | S3,S1 | 2 | ✅ (27 tests layout: 8 grid + 10 flex + 9 block) |
 | T5 | `paint`: Cairo via cgo + CLI `--png`/`--dump` | S1,S3 | 3 | ✅ (**71 PNG byte-idénticos** al oráculo; 60/71 fixtures idénticos en las 6 cadenas) |
 | T6 | `shell`: SDL3 via cgo (headers reales, sin offsets a mano) + scroll | S3 | 3 | ✅ (11 tests shell + smoke dummy; diferencial sin cambios 60/71) |
-| T7 | Tests portados + diferencial completo + paridad Meta 1 | S4,S5,S7 | 4 | pendiente |
+| T7 | Tests portados + diferencial completo + paridad Meta 1 | S4,S5,S7 | 4 | ✅ (**62/71 idénticos**; 9 = gap QuickJS registrado en KNOWN_DIFFS.md; 71/71 PNG idénticos) |
 
 ## Log
 - **L1** (2026-10-23): petición del usuario verbatim: «es muy tarde? para pensar
@@ -145,3 +145,18 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   de scroll/errores + smoke `--frames 5` con `SDL_VIDEODRIVER=dummy` (exit 0).
   Diferencial sin cambios: 60/71 con las mismas 11 diferencias conocidas.
   10 paquetes verdes; vet/race/gofmt limpios. `Risk: none`.
+- **L9** (2026-10-24): **T7 entregado — MIGRACIÓN CONSUMADA** (salvo el runtime
+  JS). Los dos huecos de paridad cerrados con pins RED→GREEN y línea del oráculo:
+  (1) `go/img` mapea formato desconocido al mensaje exacto de gdk-pixbuf
+  «Unrecognized image file format» (src/img.rs:505-515, el GError de pixbuf
+  hace passthrough), y cuerpos corruptos siguen la REGLA de passthrough del
+  decoder (gdk «Premature end-of-file encountered» vs Go «unexpected EOF» —
+  regla fiel, strings imposibles de igualar entre decoders, documentado);
+  (2) `go/dom` minusculiza tags de elementos en parse (regla del oráculo:
+  lexbor entrega el local_name ya en minúsculas, src/dom.rs:81-84; x/net/html
+  preserva camelCase). **Diferencial final: 62/71 idénticos en las 6 cadenas,
+  71/71 PNG byte-idénticos**; los 9 restantes son el runtime QuickJS sin portar
+  (cookie-echo/set, demo, events, js-dom, js-window(-error), net-utf8, timers)
+  — registrado como excepción de la S1 en
+  `go/cmd/browser-lite/testdata/KNOWN_DIFFS.md` con causa y comportamiento Go.
+  210 tests en 10 paquetes; vet/gofmt limpios. `Risk: none`.

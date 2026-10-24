@@ -172,6 +172,31 @@ func TestDecodeGIFToRGBA(t *testing.T) {
 	}
 }
 
+// TestDecodeUnknownFormatMatchesOracle pins the user-visible string for a
+// body no decoder claims: the oracle surfaces gdk-pixbuf's message
+// "Unrecognized image file format" (observed oracle stderr on the
+// img-broken fixture), not a Go-side paraphrase.
+func TestDecodeUnknownFormatMatchesOracle(t *testing.T) {
+	for _, body := range [][]byte{[]byte("this is not an image"), mustFixture(t, "img-notimage.png")} {
+		_, err := Decode(body)
+		if err == nil {
+			t.Fatal("decode must fail")
+		}
+		if want := "Unrecognized image file format"; err.Error() != want {
+			t.Fatalf("error = %q, want %q", err.Error(), want)
+		}
+	}
+}
+
+func mustFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(fixture(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
 func TestDecodeRejectsBadBodies(t *testing.T) {
 	notImage, err := os.ReadFile(fixture("img-notimage.png"))
 	if err != nil {
@@ -193,9 +218,11 @@ func TestDecodeRejectsBadBodies(t *testing.T) {
 		{"svg bom", append([]byte{0xEF, 0xBB, 0xBF}, []byte("  <svg></svg>")...), "SVG images are not supported"},
 		{"svg uppercase in prolog", []byte(`<?xml version="1.0"?><SVG></SVG>`), "SVG images are not supported"},
 		// A body that sniffs as no known format reports gdk-pixbuf's message,
-		// the user-visible text of the oracle.
-		{"garbage", []byte("this is not an image"), "Image type not supported"},
-		{"notimage fixture", notImage, "Image type not supported"},
+		// the user-visible text of the oracle (observed oracle stderr:
+		// "skipping image ... img-notimage.png: Unrecognized image file
+		// format"; src/img.rs surfaces the GError message).
+		{"garbage", []byte("this is not an image"), "Unrecognized image file format"},
+		{"notimage fixture", notImage, "Unrecognized image file format"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -207,6 +234,27 @@ func TestDecodeRejectsBadBodies(t *testing.T) {
 				t.Fatalf("error = %q, want %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+// TestDecodeCorruptBodySurfacesDecoderMessage pins the corrupt-body class:
+// a body a decoder claims but cannot finish surfaces that decoder's
+// message, the same rule as the oracle's GError passthrough (src/img.rs
+// pixbuf::decode take_error). The text itself is engine-specific —
+// gdk-pixbuf says "Premature end-of-file encountered" for a truncated PNG
+// while Go's stdlib says "unexpected EOF" — so this pins the rule, not the
+// byte text.
+func TestDecodeCorruptBodySurfacesDecoderMessage(t *testing.T) {
+	full, err := os.ReadFile(fixture("img-red.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Decode(full[:40])
+	if err == nil {
+		t.Fatal("a truncated PNG must fail")
+	}
+	if want := "unexpected EOF"; err.Error() != want {
+		t.Fatalf("error = %q, want %q (Go decoder passthrough)", err.Error(), want)
 	}
 }
 
@@ -304,7 +352,7 @@ func TestLoadWarningsForBrokenResources(t *testing.T) {
 			name:   "undecodable body",
 			html:   `<img src="img-notimage.png">`,
 			base:   baseFor(),
-			want:   "skipping image ../../test/data/img-notimage.png: Image type not supported",
+			want:   "skipping image ../../test/data/img-notimage.png: Unrecognized image file format",
 			failed: 1,
 		},
 		{
