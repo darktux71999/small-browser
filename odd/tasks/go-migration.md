@@ -35,7 +35,7 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
 | T2 | Paquetes `net` (fetch) + `img` (decode png/jpeg, límites y avisos idénticos) | S3 | 1 | ✅ (83 ejecuciones de test; paridad de strings byte a byte) |
 | T3 | Pegamento CSS: libcss via cgo + rewriter (gap/font-family/@font-face) + `Style` + mapping de estilos computados | S3 | 1 | ✅ (31 tests; glm murió a mitad → completado por muse-spark con 6 causas raíz) |
 | T4a | `text` (shaper Pango) + `layout` bloque/caja/runs | S3,S1 | 2 | ✅ (17 tests; diferencial humo 14 fixtures idénticos) |
-| T4b | `layout`: contexto flex (fila/columna, wrap, gap, grow, justify, align) | S3,S1 | 2 | delegado (muse-spark-1.3-contributor) |
+| T4b | `layout`: contexto flex (fila/columna, wrap, gap, grow, justify, align) | S3,S1 | 2 | ✅ (19 tests: 10 flex espejo de tests/flex.rs + 9 previos) |
 | T4c | `layout`: contexto grid (px/fr/auto/repeat, span, gap) | S3,S1 | 2 | pendiente |
 | T5 | `paint`: Cairo via cgo + CLI `--png`/`--dump` | S1,S3 | 3 | pendiente |
 | T6 | `shell`: SDL3 via cgo (headers reales, sin offsets a mano) + scroll | S3 | 3 | pendiente |
@@ -92,3 +92,14 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   contra el `--dump` del oráculo** en la ruta de bloque. Detalle fino: Pango
   reporta la primera línea con un bearing de ~2.2px a 16px — las aserciones de
   origen exacto son incorrectas y el oráculo absorbe el mismo valor.
+- **L5** (2026-10-24): **T4b flex entregado** (muse-spark): `go/layout/flex.go`
+  port paso a paso del algoritmo del oráculo (src/layout.rs:349-895+1299-1439):
+  recolección con ítems anónimos NoNode (sin tocar el DOM), flex_base_size con
+  medida unwrapped 1e6 para texto anónimo, wrap en líneas, distribución
+  grow/shrink por línea, justify con la semántica exacta de gaps, align
+  stretch/start/center/end, y el paso 8 con anchos forzados (R3-4: `forced`
+  enhebrado; los contenedores flex ignoran `forced.height` igual que el
+  oráculo). 10 tests espejo de tests/flex.rs (7 en RED antes), 19 en total;
+  módulo verde; vet/race/gofmt limpios. Quirk documentado del oráculo: los
+  `<img>` inline hijos de flex se descartan en la recolección (el port lo
+  replica, confirmar en T7). `Risk: none`.

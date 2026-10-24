@@ -73,13 +73,16 @@ type Layout struct {
 }
 
 // forced is the size the layout dictates for a box, overriding what the
-// cascade gives it (src/layout.rs:82-94). Without flex (T4b) only the block
-// path fills it: explicit width/height minimums.
+// cascade gives it (src/layout.rs:82-94). The flex algorithm fills width
+// and height for its items (T4b); blockify lays a box out as a block even
+// when its display is inline — a flex item is blockified (src/layout.rs:91-93).
 type forced struct {
 	// width overrides the border-box width.
 	width *float64
 	// height is a minimum border-box height; content may overflow it.
 	height *float64
+	// blockify lays the box out as a block even when its display is inline.
+	blockify bool
 }
 
 // state threads the shaper, the images and the output through the flow.
@@ -126,9 +129,10 @@ func max(a, b float64) float64 {
 // layoutNode lays out one node and returns the space it takes in the flow
 // (border height plus vertical margins). It mirrors the block path of
 // layout_node (src/layout.rs:156-303): display:none takes nothing, replaced
-// <img> elements take their own box, inline boxes only exist inside the
-// flush of their block container, and flex/grid containers fall through to
-// the plain block flow until T4b/T4c own them.
+// <img> elements take their own box, inline boxes exist only inside the
+// flush of their block container (unless blockified as a flex item), flex
+// containers open the flex formatting context, and grid containers fall
+// through to the plain block flow until T4c owns them.
 func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID, originX, originY, availableWidth float64, f forced) float64 {
 	style := &styles[id]
 	if style.Display == css.DisplayNone {
@@ -137,10 +141,13 @@ func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID
 	if isImage(doc, id) {
 		return st.layoutImage(doc, styles, id, originX, originY, availableWidth, f)
 	}
-	if style.Display == css.DisplayInline {
+	if style.Display == css.DisplayInline && !f.blockify {
 		return 0 // inline runs are flushed by their block container
 	}
-	// T4b/T4c: a flex or grid container lays out as plain block for now.
+	if style.Flex != nil {
+		return st.layoutFlexContainer(doc, styles, id, originX, originY, availableWidth, f)
+	}
+	// T4c: a grid container lays out as plain block for now.
 
 	content := computeContentBox(style, originX, originY, availableWidth, f)
 	borderX, borderW := content.borderX, content.borderW

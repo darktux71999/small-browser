@@ -290,17 +290,16 @@ func TestLineHeightIntegration(t *testing.T) {
 	}
 }
 
-func TestFlexLaysOutAsPlainBlock(t *testing.T) {
-	// T4b owns flex; until then a flex container lays out as plain block
-	// instead of dropping its content.
+func TestFlexRowDoesNotStackItemsAsBlock(t *testing.T) {
+	// T4b owns flex: a row container shares one row instead of stacking
+	// its items like the old plain-block fallback did.
 	doc, _, l := cascade(t, `<div id="f" style="display: flex"><div id="i1">one</div><div id="i2">two</div></div>`)
-	f := boxFor(t, l, doc, "#f")
 	i1 := boxFor(t, l, doc, "#i1")
 	i2 := boxFor(t, l, doc, "#i2")
-	if i2.Y < i1.Y+i1.H {
-		t.Fatalf("fallback block layout must stack flex items (i1=%v+%v i2=%v)", i1.Y, i1.H, i2.Y)
+	if i1.Y != i2.Y {
+		t.Fatalf("flex row must share one row, not stack (i1.y=%v i2.y=%v)", i1.Y, i2.Y)
 	}
-	if f.H < i2.Y+i2.H-f.Y {
-		t.Fatalf("flex fallback container must cover its items (f=%v+%v)", f.Y, f.H)
+	if !(i1.X < i2.X) {
+		t.Fatalf("flex row lays out left to right (i1.x=%v i2.x=%v)", i1.X, i2.X)
 	}
 }
