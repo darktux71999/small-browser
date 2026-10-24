@@ -32,8 +32,8 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
 | T | Unidad | Specs | Ola | Estado |
 |---|---|---|---|---|
 | T1 | Esqueleto `go/` (go.mod), paquete `dom` (parser HTML5) + runner diferencial `cmd/differential` | S1,S3 | 1 | ✅ (17 tests; oráculo-vs-oráculo 71/71 idénticos) |
-| T2 | Paquetes `net` (fetch) + `img` (decode png/jpeg, límites y avisos idénticos) | S3 | 1 | delegado (mimo-v2.6-flash) |
-| T3 | Pegamento CSS: libcss via cgo + rewriter (gap/font-family/@font-face) + `Style` + mapping de estilos computados | S3 | 1 | delegado (glm-5.3-flash-free) |
+| T2 | Paquetes `net` (fetch) + `img` (decode png/jpeg, límites y avisos idénticos) | S3 | 1 | ✅ (83 ejecuciones de test; paridad de strings byte a byte) |
+| T3 | Pegamento CSS: libcss via cgo + rewriter (gap/font-family/@font-face) + `Style` + mapping de estilos computados | S3 | 1 | ✅ (31 tests; glm murió a mitad → completado por muse-spark con 6 causas raíz) |
 | T4 | `layout`: block + flex + grid + runs de texto (el joyero) | S3,S1 | 2 | pendiente |
 | T5 | `paint`: Cairo via cgo + CLI `--png`/`--dump` | S1,S3 | 3 | pendiente |
 | T6 | `shell`: SDL3 via cgo (headers reales, sin offsets a mano) + scroll | S3 | 3 | pendiente |
@@ -61,3 +61,21 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   exit 0** (la herramienta de aceptación S1 está probada de extremo a extremo).
   17 tests Go (7 dom + 10 differential), vet limpio. Nota: `go 1.25` en go.mod
   (toolchain requerido por x/net).
+- **L3** (2026-10-24): **ola 1 completa** (T1 ✅ T2 ✅ T3 ✅). T3 murió a mitad con
+  `glm-5.3-flash-free` (segundo modelo gratuito que se nos cae en una unidad
+  larga → fuera del pool, sustituido por `qwen3.8-flash` por decisión del
+  usuario) y lo completó `muse-spark` (T3b) tras 4 correcciones del padre
+  (función duplicada en glue.h; definiciones reales movidas a glue.c — varios
+  TUs de cgo incluyen la cabecera y Go llama a esas funciones; el cookie de
+  selección convertido en **handle de registro** codificado con nodePtr porque
+  cgo prohíbe punteros Go sin fijar y el Pinner no cubre la clausura transitiva;
+  off-by-one del harness de test con `HasPrefix(html[i:i+N])`). Las **6 causas
+  raíz** de T3b: texto de `<style>/<script>/<title>` huérfano como hermano (cero
+  hojas), elementos void rompiendo la pila, atributos sin parseo de comillas,
+  sintesis html/head/body estilo lexbor (libcss blockifica los root elements),
+  defaults `New()` vs cero, `Url::join` (Rust) vs `JoinPath` (Go), null pending
+  URL en imports, y cookie con base 8192 (el runtime aborta con punteros
+  < minLegalPointer 4096). **Hallazgo**: libcss 0.9.2 resuelve `medium`/`thick`
+  a **2px/4px** (no 3px/5px de la tabla legacy) — un test corregido con
+  evidencia del oráculo (src/css_libcss.rs:2728-2748). 31/31 en go/css, módulo
+  entero verde, vet y -race limpios. Ola 2 siguiente: T4a layout block+texto.
