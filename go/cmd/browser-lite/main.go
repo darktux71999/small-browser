@@ -18,6 +18,8 @@ import (
 	"browser-lite/layout"
 	blnet "browser-lite/net"
 	"browser-lite/paint"
+	"browser-lite/shell"
+	"strconv"
 )
 
 // viewportWidth is the layout width, also the viewport that @media resolves
@@ -33,6 +35,7 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	var pngPath *string
 	var fileArg *string
+	var frames *uint32
 	dump := false
 
 	i := 0
@@ -48,6 +51,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			dump = true
 		case "--frames":
 			i++
+			if i < len(args) {
+				if n, err := strconv.ParseUint(args[i], 10, 32); err == nil {
+					v := uint32(n)
+					frames = &v
+				}
+			}
 		case "--help", "-h":
 		default:
 			v := args[i]
@@ -128,8 +137,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case dump:
 		dumpLayout(stdout, l)
 	default:
-		fmt.Fprintln(stderr, "browser-lite: interactive window is not supported in this build")
-		return 1
+		// Interactive path: the shell opens the fixed 1000x760 viewport on
+		// the full-document layout and re-paints it on scroll.
+		// --png/--dump above keep rendering the whole document.
+		if err := shell.Run(l, title, frames); err != nil {
+			if runErr, ok := err.(*shell.RunError); ok {
+				fmt.Fprintln(stderr, runErr.Diagnostic())
+			} else {
+				fmt.Fprintf(stderr, "browser-lite: window failed: %s\n", err)
+			}
+			return 1
+		}
 	}
 
 	if dump {

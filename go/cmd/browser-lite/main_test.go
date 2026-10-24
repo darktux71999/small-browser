@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,5 +135,29 @@ func TestMissingFileError(t *testing.T) {
 	want := "browser-lite: /nonexistent.html: No such file or directory (os error 2)\n"
 	if stderr.String() != want {
 		t.Errorf("stderr %q, want %q", stderr.String(), want)
+	}
+}
+
+// The interactive path renders N frames under the dummy video driver and
+// exits 0: the headless smoke for the SDL3 window shell (no display needed).
+func TestInteractiveFramesDummyDriver(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "browser-lite")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build binary: %v\n%s", err, out)
+	}
+	smoke := exec.Command(binary, "--frames", "5", fixture("long.html"))
+	smoke.Env = append(os.Environ(), "SDL_VIDEODRIVER=dummy", "SDL_AUDIODRIVER=dummy")
+	var stdout, stderr bytes.Buffer
+	smoke.Stdout, smoke.Stderr = &stdout, &stderr
+	if err := smoke.Run(); err != nil {
+		t.Fatalf("dummy-driver --frames 5: %v\nstdout: %q\nstderr: %q", err, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("stdout = %q, want empty (frames mode is silent)", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
 }

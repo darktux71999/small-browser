@@ -38,7 +38,7 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
 | T4b | `layout`: contexto flex (fila/columna, wrap, gap, grow, justify, align) | S3,S1 | 2 | ✅ (19 tests: 10 flex espejo de tests/flex.rs + 9 previos) |
 | T4c | `layout`: contexto grid (px/fr/auto/repeat, span, gap) | S3,S1 | 2 | ✅ (27 tests layout: 8 grid + 10 flex + 9 block) |
 | T5 | `paint`: Cairo via cgo + CLI `--png`/`--dump` | S1,S3 | 3 | ✅ (**71 PNG byte-idénticos** al oráculo; 60/71 fixtures idénticos en las 6 cadenas) |
-| T6 | `shell`: SDL3 via cgo (headers reales, sin offsets a mano) + scroll | S3 | 3 | pendiente |
+| T6 | `shell`: SDL3 via cgo (headers reales, sin offsets a mano) + scroll | S3 | 3 | ✅ (11 tests shell + smoke dummy; diferencial sin cambios 60/71) |
 | T7 | Tests portados + diferencial completo + paridad Meta 1 | S4,S5,S7 | 4 | pendiente |
 
 ## Log
@@ -133,3 +133,15 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   decoder, caso de tags extranjeros, runtime JS (T7+), y la ventana interactiva
   (T6, placeholder con error hasta ahora). 14 tests nuevos (9 paint + 5 CLI);
   9 paquetes verdes; vet/race/gofmt limpios. `Risk: none`.
+- **L8** (2026-10-24): **T6 shell SDL3 entregado** — `go/shell` via cgo contra
+  los **headers reales** de SDL3 (los unions de C se leen con helpers C; cero
+  offsets a mano — la clase de bugs ABI del oráculo queda extinta por
+  construcción) + la rama interactiva de la CLI. Las tres lecciones del oráculo
+  están codificadas: `SDL_Delay(16)` en vez de `WaitEventTimeout` (el bug del
+  scroll tragado), `RunError` con diagnósticos `paint failed`/`window failed`
+  byte-idénticos, y la `G` de vi por el modificador SHIFT. Scroll: clamp
+  [0, max(0, docH−760)], línea 40px, página 700px (viewport−60). Conversión
+  RGBA→ARGB8888 premultiplicado igual que `rgba_surface` del oráculo. 11 tests
+  de scroll/errores + smoke `--frames 5` con `SDL_VIDEODRIVER=dummy` (exit 0).
+  Diferencial sin cambios: 60/71 con las mismas 11 diferencias conocidas.
+  10 paquetes verdes; vet/race/gofmt limpios. `Risk: none`.
