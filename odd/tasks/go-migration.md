@@ -34,7 +34,9 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
 | T1 | Esqueleto `go/` (go.mod), paquete `dom` (parser HTML5) + runner diferencial `cmd/differential` | S1,S3 | 1 | ✅ (17 tests; oráculo-vs-oráculo 71/71 idénticos) |
 | T2 | Paquetes `net` (fetch) + `img` (decode png/jpeg, límites y avisos idénticos) | S3 | 1 | ✅ (83 ejecuciones de test; paridad de strings byte a byte) |
 | T3 | Pegamento CSS: libcss via cgo + rewriter (gap/font-family/@font-face) + `Style` + mapping de estilos computados | S3 | 1 | ✅ (31 tests; glm murió a mitad → completado por muse-spark con 6 causas raíz) |
-| T4 | `layout`: block + flex + grid + runs de texto (el joyero) | S3,S1 | 2 | pendiente |
+| T4a | `text` (shaper Pango) + `layout` bloque/caja/runs | S3,S1 | 2 | ✅ (17 tests; diferencial humo 14 fixtures idénticos) |
+| T4b | `layout`: contexto flex (fila/columna, wrap, gap, grow, justify, align) | S3,S1 | 2 | delegado (muse-spark-1.3-contributor) |
+| T4c | `layout`: contexto grid (px/fr/auto/repeat, span, gap) | S3,S1 | 2 | pendiente |
 | T5 | `paint`: Cairo via cgo + CLI `--png`/`--dump` | S1,S3 | 3 | pendiente |
 | T6 | `shell`: SDL3 via cgo (headers reales, sin offsets a mano) + scroll | S3 | 3 | pendiente |
 | T7 | Tests portados + diferencial completo + paridad Meta 1 | S4,S5,S7 | 4 | pendiente |
@@ -79,3 +81,14 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   a **2px/4px** (no 3px/5px de la tabla legacy) — un test corregido con
   evidencia del oráculo (src/css_libcss.rs:2728-2748). 31/31 en go/css, módulo
   entero verde, vet y -race limpios. Ola 2 siguiente: T4a layout block+texto.
+- **L4** (2026-10-24): **T4a entregado** (muse-spark): `go/text` (shaper Pango
+  via cgo, 72dpi, familias por fontconfig con el mapa de genéricas, atributos
+  de interlineado/tracking, `ResolveFamily` first-match) + `go/layout` (cajas,
+  modelo de caja con la semántica T11: el borde vive dentro de `w`, `h` crece
+  como el padding; formato de bloque, `flush_text` con cajas `#text`, `<img>`,
+  runs para pintar). Flex/grid caen a bloque plano (pinneado por test) — es la
+  brecha de T4b/T4c. 17 tests; módulo entero verde (7 paquetes); vet/race/gofmt
+  limpios. **Diferencial de humo del propio worker: 14 fixtures byte-idénticos
+  contra el `--dump` del oráculo** en la ruta de bloque. Detalle fino: Pango
+  reporta la primera línea con un bearing de ~2.2px a 16px — las aserciones de
+  origen exacto son incorrectas y el oráculo absorbe el mismo valor.
