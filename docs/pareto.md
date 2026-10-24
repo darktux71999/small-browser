@@ -19,8 +19,8 @@ Referencia de prioridades para browser-lite. Evita la ingeniería inversa ciega
 |---|---|---|---|---|
 | 1 | Modelo de caja + `display` block/inline/none | prácticamente 100% | ✅ | — |
 | 2 | Cascada: selectores, especificidad, `!important`, herencia | 100% | ✅ (libcss) | — |
-| 3 | Texto inline: wrap, `font-size/weight/family`, `line-height`, `text-align` | top de propiedades | ⚠️ Pango con fallback mono, **sin webfonts** | **alta** |
-| 4 | **`@font-face` / webfonts** | ~50%+ de páginas (`font-display: swap` en 49.6%) | ❌ | **alta** |
+| 3 | Texto inline: wrap, `font-size/weight/family`, `line-height`, `text-align` | top de propiedades | ✅ familias resueltas vía fontconfig (stacks + genéricas) | ✅ |
+| 4 | **`@font-face` / webfonts** | ~50%+ de páginas (`font-display: swap` en 49.6%) | ⚠️ ttf/otf ✅ (app-fonts fontconfig); woff2/local() ❌ con aviso | media-alta |
 | 5 | Fondos: `background-color/image/repeat/position/size` | 96/90/85/91/82% | ⚠️ color+image+repeat ✅, position/size ❌ | media-alta |
 | 6 | `border` / `border-radius` | 71% / 65% (px dominante 65–71%) | ❌ (S10) | **alta** |
 | 7 | **Flexbox** | 97% de pageviews | ✅ mínimo (gap, grow, wrap) | — |

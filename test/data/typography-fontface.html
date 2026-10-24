@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <title>typography fontface</title>
+  <style>
+    @font-face {
+      font-family: "T10 Webfont Test";
+      src: url("typography-webfont-test.ttf") format("truetype");
+      font-weight: 400;
+      font-style: normal;
+    }
+    body { margin: 0; padding: 8px; background: #ffffff; font-size: 16px; }
+    p { margin: 4px 0; }
+    .web { font-family: "T10 Webfont Test"; }
+    .fallback { font-family: T10 Sans Test; }
+  </style>
+</head>
+<body>
+  <p class="web">Handgloves Webfont 42</p>
+  <p class="fallback">Handgloves Webfont 42</p>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <title>typography fontface unsupported</title>
+  <style>
+    @font-face {
+      font-family: "Woff2 Only";
+      src: url("typography-missing.woff2") format("woff2");
+    }
+    @font-face {
+      font-family: "Mixed Src";
+      src: url("typography-missing.woff2") format("woff2"),
+           url("typography-webfont-test.ttf") format("truetype");
+    }
+    body { margin: 0; padding: 8px; font-size: 16px; font-family: "Woff2 Only"; }
+    p { margin: 4px 0; color: #ff0000; }
+    .mixed { font-family: "Mixed Src"; }
+  </style>
+</head>
+<body>
+  <p>fallback paragraph red</p>
+  <p class="mixed">mixed source paragraph</p>
+</body>
+</html>

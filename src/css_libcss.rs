@@ -1373,7 +1373,12 @@ unsafe fn finish_imports(parent: *mut CssStylesheet, mut loader: Option<&mut Loa
         let url_text = String::from_utf8_lossy(lwc_bytes(url)).into_owned();
         let child = match loader.as_deref_mut() {
             Some(loader) => match loader.load(&url_text) {
-                Some(css) => parse_fetched_sheet(&css, &url_text, loader),
+                Some(css) => {
+                    // An imported sheet's `@font-face` registers here too:
+                    // this is the only place its text is in our hands.
+                    register_font_faces(loader, &css, &url_text);
+                    parse_fetched_sheet(&css, &url_text, loader)
+                }
                 None => create_empty_sheet(url_text.as_bytes()),
             },
             None => create_empty_sheet(url_text.as_bytes()),
@@ -1535,6 +1540,12 @@ fn rewrite_rule_list(src: &str, out: &mut String) {
         let block_end = find_block_end(bytes, block_start);
         let prelude = &src[i..block_start];
         let body = &src[block_start + 1..block_end];
+        if is_font_face_rule(prelude) {
+            // `@font-face` is extracted by `font_face_declarations` (T10) and
+            // must never reach libcss as an ordinary declaration block.
+            i = block_end + 1;
+            continue;
+        }
         out.push_str(prelude);
         out.push('{');
         if at_rule_holds_rules(prelude) {
@@ -1629,6 +1640,27 @@ fn rewrite_declaration(decl: &str, out: &mut String) {
         // The engine has no minimum/maximum sizing: these declarations are
         // inert, and the carriers need the room.
         "min-width" | "max-width" => {}
+        // libcss 0.9.2 drops the whole declaration when an unquoted family
+        // sequence contains another identifier that a generic keyword could
+        // match (`font-family: Liberation Serif` never reaches the style),
+        // and CSS asks for quotes around any family name with whitespace
+        // anyway. A list without a generic keyword also makes libcss report
+        // the generic status byte unreliably (see [`normalize_font_family`]).
+        // A value that needs no change is copied verbatim, byte for byte.
+        "font-family" => {
+            let (core, important) = split_important(value);
+            let normalized = normalize_font_family(core);
+            if normalized == core.trim() {
+                out.push_str(decl);
+            } else {
+                out.push_str(property.trim());
+                out.push(':');
+                out.push_str(&normalized);
+                if important {
+                    out.push_str("!important");
+                }
+            }
+        }
         _ => out.push_str(decl),
     }
 }
@@ -1749,6 +1781,373 @@ fn find_block_end(bytes: &[u8], i: usize) -> usize {
         j += 1;
     }
     bytes.len()
+}
+
+// ---------------------------------------------------------------------------
+// Font faces (T10)
+// ---------------------------------------------------------------------------
+
+/// Largest accepted font body before it is rejected (mirrors the image cap).
+const MAX_FONT_BYTES: usize = 10 * 1024 * 1024;
+
+/// Per-font transfer timeout, matching the image loader's magnitude.
+const FONT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Is this prelude an `@font-face` block? At-rule names are case-insensitive.
+fn is_font_face_rule(prelude: &str) -> bool {
+    let trimmed = prelude.trim_start();
+    let Some(rest) = trimmed.strip_prefix('@') else {
+        return false;
+    };
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    name.eq_ignore_ascii_case("font-face")
+}
+
+/// Calls `f` with the declaration body of every `@font-face` block in `css`,
+/// recursing into rule-holding at-rules (`@media`, ...) the way the gap
+/// rewrite does. It mirrors [`for_each_style_rule`] minus the style rules;
+/// the walkers stay separate so neither contract leaks into the other.
+fn for_each_font_face(css: &str, f: &mut impl FnMut(&str)) {
+    let bytes = css.as_bytes();
+    let mut i = 0usize;
+    'rules: while i < bytes.len() {
+        i = skip_trivia(bytes, i);
+        if i >= bytes.len() {
+            return;
+        }
+        if bytes[i] == b'}' {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        let block_start;
+        loop {
+            if j >= bytes.len() {
+                return;
+            }
+            match bytes[j] {
+                b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => {
+                    j = skip_comment(bytes, j);
+                    continue;
+                }
+                b'"' | b'\'' => {
+                    j = skip_string(bytes, j);
+                    continue;
+                }
+                b'{' => {
+                    block_start = j;
+                    break;
+                }
+                b';' => {
+                    // An at-rule without a block (`@import`): skip it.
+                    i = j + 1;
+                    continue 'rules;
+                }
+                b'}' => {
+                    i = j;
+                    continue 'rules;
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        let block_end = find_block_end(bytes, block_start);
+        let prelude = &css[i..block_start];
+        let body = &css[block_start + 1..block_end];
+        if at_rule_holds_rules(prelude) {
+            for_each_font_face(body, f);
+        } else if is_font_face_rule(prelude) {
+            f(body);
+        }
+        i = block_end + 1;
+    }
+}
+
+/// One `@font-face` block, reduced to what the engine reads.
+#[derive(Debug, Default)]
+struct FontFace {
+    /// The family the block registers, quotes stripped.
+    family: String,
+    /// The raw `src: ...` list, as authored.
+    src: String,
+    /// `font-weight`, as authored: kept for diagnostics — file selection is
+    /// left to fontconfig matching inside the family (T10's minimal rule).
+    weight: Option<String>,
+    /// `font-style`, as authored; same note as [`FontFace::weight`].
+    style: Option<String>,
+}
+
+/// Every `@font-face` block of a sheet that declares a family and a `src`.
+fn font_face_declarations(css: &str) -> Vec<FontFace> {
+    let mut out = Vec::new();
+    for_each_font_face(css, &mut |body| {
+        let mut face = FontFace::default();
+        for part in split_declarations(body) {
+            let Some((property, value)) = split_declaration(&part) else {
+                continue;
+            };
+            let (value, _important) = split_important(value);
+            match property.trim().to_ascii_lowercase().as_str() {
+                "font-family" => {
+                    face.family = value.trim().trim_matches(['"', '\'']).trim().to_string();
+                }
+                "src" => face.src = value.trim().to_string(),
+                "font-weight" => face.weight = Some(value.trim().to_string()),
+                "font-style" => face.style = Some(value.trim().to_string()),
+                _ => {}
+            }
+        }
+        if !face.family.is_empty() && !face.src.is_empty() {
+            out.push(face);
+        }
+    });
+    out
+}
+
+/// `font-weight`/`font-style` as declared, for the warnings of one block.
+fn face_detail(face: &FontFace) -> String {
+    let mut out = String::new();
+    if let Some(weight) = &face.weight {
+        out.push_str(&format!(", font-weight {weight}"));
+    }
+    if let Some(style) = &face.style {
+        out.push_str(&format!(", font-style {style}"));
+    }
+    out
+}
+
+/// Splits a comma-separated CSS value at top level: quotes and parentheses
+/// (the `url(...)`/`format(...)` items of `src`) keep their commas.
+fn split_comma_list(value: &str) -> Vec<&str> {
+    let bytes = value.as_bytes();
+    let mut items = Vec::new();
+    let mut segment = 0usize;
+    let mut depth = 0usize;
+    let mut j = 0usize;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => j = skip_comment(bytes, j),
+            b'"' | b'\'' => j = skip_string(bytes, j),
+            b'(' => {
+                depth += 1;
+                j += 1;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                j += 1;
+            }
+            b',' if depth == 0 => {
+                items.push(&value[segment..j]);
+                j += 1;
+                segment = j;
+            }
+            _ => j += 1,
+        }
+    }
+    items.push(&value[segment..]);
+    items
+}
+
+/// Normalises a `font-family` value on the way into libcss (T10).
+///
+/// Two fixes, both invisible to the cascade:
+///
+/// - Every unquoted multi-word name gains quotes. libcss 0.9.2 drops the
+///   whole declaration when such a sequence contains another identifier
+///   (`font-family: Liberation Serif` never reaches the style), and CSS asks
+///   for those quotes anyway: a multi-ident sequence is ONE family name, not
+///   a family followed by a generic keyword.
+/// - A list that names families but declares no generic gets the implicit
+///   `sans-serif` tail appended. libcss reports the generic status byte
+///   *unreliably* for such declarations (out-of-enum values like 6/7,
+///   varying per process — measured against the system libcss 0.9.2), while
+///   a declaration with an explicit generic always reports it correctly.
+///   The appended keyword is exactly the UA default libcss itself falls back
+///   to (the UA callback answers sans-serif), so the meaning does not change
+///   — it becomes observable. `inherit`/`initial`/`unset`/`revert` are not
+///   family lists and stay untouched.
+fn normalize_font_family(value: &str) -> String {
+    const GENERIC: [&str; 5] = ["serif", "sans-serif", "cursive", "fantasy", "monospace"];
+    const CSS_WIDE: [&str; 4] = ["inherit", "initial", "unset", "revert"];
+
+    let mut items: Vec<String> = Vec::new();
+    for item in split_comma_list(value) {
+        let trimmed = item.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let quoted = !trimmed.is_empty()
+            && !trimmed.starts_with('"')
+            && !trimmed.starts_with('\'')
+            && !GENERIC.contains(&lower.as_str())
+            && !CSS_WIDE.contains(&lower.as_str())
+            && trimmed.chars().any(|c| c.is_whitespace());
+        if quoted {
+            items.push(format!(
+                "\"{}\"",
+                trimmed.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+        } else {
+            items.push(trimmed.to_string());
+        }
+    }
+
+    let has_keyword = items.iter().any(|item| {
+        let lower = item.to_ascii_lowercase();
+        GENERIC.contains(&lower.as_str()) || CSS_WIDE.contains(&lower.as_str())
+    });
+    let has_family = items.iter().any(|item| !item.is_empty());
+    if has_family && !has_keyword {
+        items.push(String::from("sans-serif"));
+    }
+    items.join(", ")
+}
+
+/// The inside of the first `token(...)` occurrence of `item` (case-insensitive),
+/// with any quotes around it removed.
+fn token_args<'a>(item: &'a str, token: &str) -> Option<&'a str> {
+    let bytes = item.as_bytes();
+    let token = token.as_bytes();
+    let mut i = 0usize;
+    while i + token.len() <= bytes.len() {
+        if bytes[i..i + token.len()].eq_ignore_ascii_case(token) {
+            let rest = item[i + token.len()..].trim_start();
+            if rest.starts_with('(') {
+                let rbytes = rest.as_bytes();
+                let mut depth = 0usize;
+                let mut j = 0usize;
+                while j < rbytes.len() {
+                    match rbytes[j] {
+                        b'"' | b'\'' => {
+                            j = skip_string(rbytes, j);
+                            continue;
+                        }
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth = depth.saturating_sub(1);
+                            if depth == 0 {
+                                return Some(rest[1..j].trim().trim_matches(['"', '\'']).trim());
+                            }
+                        }
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                return None;
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The first `src` entry this engine can actually load: a `url(...)` whose
+/// `format(...)` hint or extension says truetype/opentype. `woff`/`woff2`
+/// have no cheap decoder here and `local()` would need family aliasing the
+/// engine does not do, so both are skipped in favour of a later entry.
+fn supported_font_src(src: &str) -> Option<String> {
+    for item in split_comma_list(src) {
+        let Some(url) = token_args(item, "url") else {
+            continue;
+        };
+        let supported = match token_args(item, "format").map(|f| f.to_ascii_lowercase()) {
+            Some(format) => matches!(format.as_str(), "truetype" | "opentype"),
+            None => {
+                let lower = url.to_ascii_lowercase();
+                lower.ends_with(".ttf") || lower.ends_with(".otf")
+            }
+        };
+        if supported && !url.is_empty() {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
+/// Fetch and register the `@font-face` fonts of one author sheet.
+///
+/// The declarations themselves never reach libcss (the rewriter strips
+/// them); here the first supported `src` is fetched with the same caps and
+/// caching the stylesheet loader uses, written to the on-disk font cache and
+/// registered with fontconfig for the whole app. Every failure degrades to
+/// one `browser-lite:` warning, like a broken stylesheet or image.
+fn register_font_faces(loader: &mut Loader, css: &str, sheet_url: &str) {
+    for face in font_face_declarations(css) {
+        let Some(src) = supported_font_src(&face.src) else {
+            // One diagnostic per family: a real page declares the same
+            // family once per weight/style block (codeberg.org: 30 blocks
+            // for 5 CJK families).
+            if loader.warned_font_faces.insert(face.family.clone()) {
+                loader.warn(format!(
+                    "skipping @font-face for family {:?}{}: no supported src (woff/woff2 and local() are not supported here)",
+                    face.family,
+                    face_detail(&face)
+                ));
+            }
+            continue;
+        };
+        let Some(url) = join_url(sheet_url, &src) else {
+            loader.warn(format!(
+                "skipping @font-face for family {:?}: cannot resolve {src:?} against {sheet_url:?}",
+                face.family
+            ));
+            continue;
+        };
+        let Some(bytes) = loader.load_font(&url) else {
+            continue; // load_font already warned
+        };
+        match cache_font_file(&url, &bytes) {
+            Some(path) => {
+                if !crate::layout::fontconfig::add_font_file(&path) {
+                    loader.warn(format!(
+                        "skipping font {url}: fontconfig rejected {}",
+                        path.display()
+                    ));
+                }
+            }
+            None => loader.warn(format!("skipping font {url}: cannot write the font cache")),
+        }
+    }
+}
+
+/// The app font cache on the home disk (`~/.cache/browser-lite/fonts`).
+///
+/// The installed fontconfig (2.18.3) exports no `FcConfigAppFontAddMemory`,
+/// so a downloaded font reaches `FcConfigAppFontAddFile` as a file. The name
+/// is a hash of the URL, so re-fetching overwrites the same path, and the
+/// write goes through a temporary file plus a rename: another process that
+/// registers the same path can never see it half-written.
+fn cache_font_file(url: &str, bytes: &[u8]) -> Option<PathBuf> {
+    let mut dir = PathBuf::from(std::env::var_os("HOME")?);
+    dir.push(".cache");
+    dir.push("browser-lite");
+    dir.push("fonts");
+    std::fs::create_dir_all(&dir).ok()?;
+    let ext = if url.to_ascii_lowercase().ends_with(".otf") {
+        "otf"
+    } else {
+        "ttf"
+    };
+    let name = format!("{:016x}.{ext}", fnv1a(url));
+    let path = dir.join(&name);
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, bytes).ok()?;
+    if std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return None;
+    }
+    Some(path)
+}
+
+/// FNV-1a over the URL: a stable, dependency-free cache file name.
+fn fnv1a(text: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 // ---------------------------------------------------------------------------
@@ -2297,12 +2696,18 @@ unsafe fn map_style(
         out.background_image = Some(String::from_utf8_lossy(lwc_bytes(background_url)).into_owned());
     }
 
+    // The full computed family list (T10): libcss hands back a
+    // NULL-terminated array of named families plus a generic status byte.
+    // The previous code kept only `*names` (the FIRST family), so every
+    // stack lost its fallbacks and generic tail; both views are now derived
+    // from the same array. Nothing is borrowed past this call: the lwc
+    // strings die with the computed style in the teardown below.
     let mut families: *mut *mut LwcString = ptr::null_mut();
     let family_type = css_computed_font_family(style, &mut families);
-    out.font_family = if !families.is_null() && !(*families).is_null() {
-        String::from_utf8_lossy(lwc_bytes(*families)).into_owned()
-    } else {
-        match family_type {
+    let names = family_names(families);
+    out.font_family = match names.first() {
+        Some(first) => first.clone(),
+        None => match family_type {
             CSS_FONT_FAMILY_SERIF => "Serif",
             CSS_FONT_FAMILY_CURSIVE => "Cursive",
             CSS_FONT_FAMILY_FANTASY => "Fantasy",
@@ -2310,8 +2715,9 @@ unsafe fn map_style(
             CSS_FONT_FAMILY_SANS_SERIF => "Sans",
             _ => "Sans",
         }
-        .to_string()
+        .to_string(),
     };
+    out.font_families = family_stack(names, family_type);
 
     if let Some(px) =
         length_px(style, unit_ctx, css_computed_font_size, CSS_FONT_SIZE_DIMENSION)
@@ -2368,6 +2774,53 @@ unsafe fn map_style(
     out.inline_align = out.text_align == TextAlign::Center;
 
     out
+}
+
+/// Maximum number of `font-family` entries read from one computed style; a
+/// sane ceiling against a malformed array (a real stack is under a dozen).
+const MAX_FAMILIES: usize = 64;
+
+/// Copies the named families out of libcss' NULL-terminated array, in author
+/// order. The strings are owned here: the computed style is destroyed before
+/// the [`Style`] values reach layout.
+unsafe fn family_names(names: *mut *mut LwcString) -> Vec<String> {
+    let mut out = Vec::new();
+    if names.is_null() {
+        return out;
+    }
+    for i in 0..MAX_FAMILIES {
+        let entry = (*names.add(i));
+        if entry.is_null() {
+            break;
+        }
+        out.push(String::from_utf8_lossy(lwc_bytes(entry)).into_owned());
+    }
+    out
+}
+
+/// The full family stack: the named families plus the generic keyword the
+/// declaration ends with (libcss stores it separately from the names), or
+/// the sans default when there is none. A generic already inside the names
+/// is not repeated.
+unsafe fn family_stack(names: Vec<String>, family_type: u8) -> Vec<String> {
+    let keyword = match family_type {
+        CSS_FONT_FAMILY_SERIF => Some("serif"),
+        CSS_FONT_FAMILY_SANS_SERIF => Some("sans-serif"),
+        CSS_FONT_FAMILY_CURSIVE => Some("cursive"),
+        CSS_FONT_FAMILY_FANTASY => Some("fantasy"),
+        CSS_FONT_FAMILY_MONOSPACE => Some("monospace"),
+        _ => None,
+    };
+    let mut stack = names;
+    if let Some(keyword) = keyword {
+        if !stack.iter().any(|f| f.eq_ignore_ascii_case(keyword)) {
+            stack.push(keyword.to_string());
+        }
+    }
+    if stack.is_empty() {
+        stack.push(String::from("sans-serif"));
+    }
+    stack
 }
 
 // ---------------------------------------------------------------------------
@@ -2579,6 +3032,13 @@ struct SheetInput<'a> {
 struct Loader {
     limits: SheetLimits,
     cache: HashMap<String, Option<String>>,
+    /// `@font-face` bodies by resolved URL (T10): raw bytes, same one-fetch
+    /// rule and failure caching as the stylesheet cache.
+    font_cache: HashMap<String, Option<Vec<u8>>>,
+    /// Families whose `@font-face` already produced a warning (T10): like
+    /// the image cache, one diagnostic per resource instead of one per
+    /// `font-weight`/`font-style` block of the same family.
+    warned_font_faces: HashSet<String>,
     active: HashSet<String>,
     fetched: usize,
     warnings: Vec<String>,
@@ -2589,6 +3049,8 @@ impl Loader {
         Loader {
             limits,
             cache: HashMap::new(),
+            font_cache: HashMap::new(),
+            warned_font_faces: HashSet::new(),
             active: HashSet::new(),
             fetched: 0,
             warnings: Vec::new(),
@@ -2626,6 +3088,23 @@ impl Loader {
 
     fn exit(&mut self, url: &str) {
         self.active.remove(url);
+    }
+
+    /// Fetch `url` once per run as raw font bytes. `None` means the font is
+    /// unusable; the failure is cached too, so a broken URL is not retried.
+    fn load_font(&mut self, url: &str) -> Option<Vec<u8>> {
+        if let Some(cached) = self.font_cache.get(url) {
+            return cached.clone();
+        }
+        let result = match fetch_font_bytes(url) {
+            Ok(bytes) => Some(bytes),
+            Err(err) => {
+                self.warn(format!("skipping font {url}: {err}"));
+                None
+            }
+        };
+        self.font_cache.insert(url.to_string(), result.clone());
+        result
     }
 }
 
@@ -2726,6 +3205,19 @@ fn fetch_sheet(url: &str, limits: &SheetLimits) -> Result<String, String> {
     read_capped(&path, limits.max_bytes)
 }
 
+/// Fetch one font body (`@font-face`), honouring the same caps: http(s)
+/// through the shared capped client, local files with the reject-not-truncate
+/// rule of the stylesheet reader.
+fn fetch_font_bytes(url: &str) -> Result<Vec<u8>, String> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        let (bytes, _content_type) =
+            crate::net::fetch_bytes_limited(url, MAX_FONT_BYTES, FONT_TIMEOUT)?;
+        return Ok(bytes);
+    }
+    let path = local_path(url).ok_or_else(|| format!("unsupported font URL {url:?}"))?;
+    read_capped_bytes(&path, MAX_FONT_BYTES)
+}
+
 /// The filesystem path behind a stylesheet URL, if there is one.
 fn local_path(url: &str) -> Option<PathBuf> {
     match Url::parse(url) {
@@ -2739,6 +3231,14 @@ fn local_path(url: &str) -> Option<PathBuf> {
 
 /// Read a file, rejecting (not truncating) anything over `max_bytes`.
 fn read_capped(path: &Path, max_bytes: usize) -> Result<String, String> {
+    let bytes = read_capped_bytes(path, max_bytes)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Read a file as raw bytes, rejecting (not truncating) anything over
+/// `max_bytes`. The byte-level twin of [`read_capped`] for fonts, whose
+/// bytes must never pass through a lossy text decode.
+fn read_capped_bytes(path: &Path, max_bytes: usize) -> Result<Vec<u8>, String> {
     let meta = std::fs::metadata(path).map_err(|err| err.to_string())?;
     if meta.is_dir() {
         return Err(String::from("is a directory"));
@@ -2757,7 +3257,7 @@ fn read_capped(path: &Path, max_bytes: usize) -> Result<String, String> {
     if bytes.len() > max_bytes {
         return Err(format!("body exceeds the {max_bytes} byte limit"));
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    Ok(bytes)
 }
 
 /// Collect the document's `<style>` sections, in document order.
@@ -2991,6 +3491,30 @@ fn compute_inner(
     // the same author sheets here, after the cascade above fixed display.
     let css_texts: Vec<&str> = sheets.iter().map(|input| input.css).collect();
     apply_grid_styles(doc, &css_texts, &mut out);
+
+    // `@font-face` never reaches libcss (the rewriter strips it): the font
+    // files are fetched and registered with fontconfig here, before layout
+    // measures any text. The plain `compute` path fetches nothing — its
+    // contract says so — and reports the dropped faces instead of hiding
+    // them.
+    match loader.as_deref_mut() {
+        Some(loader) => {
+            for input in sheets {
+                register_font_faces(loader, input.css, input.url);
+            }
+        }
+        None => {
+            for input in sheets {
+                for face in font_face_declarations(input.css) {
+                    eprintln!(
+                        "browser-lite: skipping @font-face for family {:?}{}: styles were computed without subresource loading",
+                        face.family,
+                        face_detail(&face)
+                    );
+                }
+            }
+        }
+    }
 
     out
 }

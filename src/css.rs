@@ -362,7 +362,18 @@ pub struct Style {
     pub font_size: f64,
     // Typography, populated by the libcss path. `bold` and `inline_align` stay
     // for layout/paint compatibility and mirror weight >= 600 and centred text.
+    /// The first family of [`Style::font_families`] (or the display name of
+    /// the generic keyword when the declaration names no family), kept as the
+    /// pre-T10 single-family view: existing consumers pin this exact content.
     pub font_family: String,
+    /// The full computed family list in author order (T10, Pareto row #4):
+    /// every named family libcss computed — unquoted, so a multi-word name
+    /// keeps its spaces (`Segoe UI`) — plus the generic keyword tail
+    /// (`serif`, `sans-serif`, ...) when the declaration carries one. Layout
+    /// resolves the list left to right against fontconfig and falls back to
+    /// the sans default; a `style=""` attribute and inheritance fill it the
+    /// same way the single-family view is filled.
+    pub font_families: Vec<String>,
     pub font_weight: u32,
     pub italic: bool,
     pub line_height: f64,
@@ -409,6 +420,9 @@ impl Default for Style {
             background_image: None,
             font_size: 16.0,
             font_family: String::from("Sans"),
+            // The sans default as a stack: the generic keyword maps straight
+            // to Pango's alias without consulting fontconfig first.
+            font_families: vec![String::from("sans-serif")],
             font_weight: 400,
             italic: false,
             line_height: 1.2,

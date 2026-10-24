@@ -73,7 +73,7 @@ codeberg.org. Mirror Engram: pendiente.
 | T7 | Grid mínimo: contexto de formato grid (`layout.rs` + `css::Style` + mapping) | S8 | 4 | ✅ 77abd05 (worker muse-spark: 6 tests RED→GREEN; diferencial 53 idénticos, 5 = fixtures grid; assess: medium/under_budget) |
 | T8 | Scroll/viewport: ventana fija + offset de scroll + recorte al pintar | S9 | 4 | ✅ worker (16 tests RED→GREEN; 15 salidas byte-idénticas; commit pendiente tras el seam con T7) |
 | T9 | `background-image` mínimo (url, repeat, posición) — las montañas del héroe | S10 | 4 | ✅ (6 tests RED→GREEN; diferencial 58 idénticos + 3 fixtures nuevos; codeberg: montañas pintando) |
-| T10 | Tipografía real: resolución de lista de familias + keywords genéricas + `@font-face` (ttf/otf) | Pareto #4 | 4 | delegado (mimo-v2.6-flash) |
+| T10 | Tipografía real: resolución de lista de familias + keywords genéricas + `@font-face` (ttf/otf) | Pareto #4 | 4 | ✅ (9 tests RED→GREEN; diferencial 61+1 esperado; 0 regresiones — falta instalar fuentes para verlo) |
 
 Nota de planificación (aceptada): el bug de wrapping NO se arregla en la ruta de
 texto actual porque T3 la reemplaza; si tras Pango persistieran líneas cortadas,
@@ -304,3 +304,25 @@ sería bug de anchura de caja y se corrige ahí.
   `browser-lite://inline/{id}` y sus URLs relativas de fondo no resuelven
   (aviso honesto, sin cambio de píxeles). Limpieza: /tmp (tmpfs 1GiB) se llenó
   con el scratch del worker — builds de scratch van al disco de home.
+- **L16** (2026-10-23): **T10 tipografía real entregado** (worker mimo-v2.6-flash):
+  lista completa de familias resuelta en orden de autora contra fontconfig
+  (primer match real gana; genéricas mapeadas: sans-serif/system-ui→Sans,
+  serif→Serif, monospace/ui-monospace→Mono, cursive/fantasy), `@font-face`
+  extraído del camino libcss (mismo walker que los carriers), descarga con el
+  loader existente, registro como app-font de fontconfig vía caché en home
+  (fontconfig 2.18.3 **no** trae `FcConfigAppFontAddMemory`), ttf/otf soportados
+  con aviso honesto para woff2 y `local()`. Bugs de libcss 0.9.2 encontrados y
+  esquivados en el rewriter: (a) el byte de estatus de genérica es **basura**
+  para declaraciones solo-nombre (varía por proceso) salvo que traigan genérica
+  explícita → se añade la cola implícita `sans-serif`; (b) secuencias
+  multi-identificador sin comillas con un identificador tipo genérico
+  (`Liberation Serif`) se **descartan** en silencio → se normalizan con comillas.
+  Tests: 9 (genéricas, stacks con fallback real, @font-face local, degradación
+  con aviso, pin pre/code mono) bajo un fontconfig privado controlado.
+  Diferencial: 61/62 idénticos en dump y png; el único delta es el aviso
+  esperado de un fixture `local()`. Suites: 174 passed / 0 failed. **Hallazgo
+  de entorno: la máquina tiene instalada UNA sola familia (JetBrains Mono)** —
+  el gancho visual necesita instalar paquetes de fuentes (decisión del
+  usuario). `Risk: item 6` (la aceptación visual no es probable sin más
+  fuentes instaladas). Codeberg declara 5 `@font-face` CJK solo-woff2 →
+  avisan una vez por familia y degradan (sin decoder woff2 barato).

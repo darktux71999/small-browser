@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <title>typography stack</title>
+  <style>
+    body { margin: 0; padding: 8px; background: #ffffff; font-size: 16px; }
+    p { margin: 4px 0; }
+    .serif { font-family: serif; }
+    .sans { font-family: sans-serif; }
+    .quoted-serif { font-family: "NoSuchFont XYZ", serif; }
+    .unquoted-serif { font-family: NoSuchFont XYZ, serif; }
+    .missing-only { font-family: "NoSuchFont XYZ"; }
+    .quoted-named { font-family: "T10 Serif Test"; }
+    .unquoted-named { font-family: T10 Serif Test; }
+    .spaced-named { font-family: "T10 Sans Test", serif; }
+  </style>
+</head>
+<body>
+  <p class="serif">Hamburgefonstiv 123</p>
+  <p class="sans">Hamburgefonstiv 123</p>
+  <p class="quoted-serif">Hamburgefonstiv 123</p>
+  <p class="unquoted-serif">Hamburgefonstiv 123</p>
+  <p class="missing-only">Hamburgefonstiv 123</p>
+  <p class="quoted-named">Hamburgefonstiv 123</p>
+  <p class="unquoted-named">Hamburgefonstiv 123</p>
+  <p class="spaced-named">Hamburgefonstiv 123</p>
+</body>
+</html>

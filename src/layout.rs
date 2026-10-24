@@ -1783,7 +1783,15 @@ pub(crate) mod pango {
             }
 
             let desc = pango_font_description_from_string(b"Sans\0".as_ptr() as *const c_char);
-            let family = CString::new(family_name(&style.font_family)).unwrap_or_default();
+            // The full computed stack (T10), resolved against fontconfig in
+            // author order; an empty stack means "use the legacy single
+            // family", which itself defaults to the sans keyword.
+            let stack: &[String] = if style.font_families.is_empty() {
+                std::slice::from_ref(&style.font_family)
+            } else {
+                &style.font_families
+            };
+            let family = CString::new(resolve_family(stack)).unwrap_or_default();
             pango_font_description_set_family(desc, family.as_ptr());
             pango_font_description_set_size(
                 desc,
@@ -1838,15 +1846,191 @@ pub(crate) mod pango {
         }
     }
 
-    /// libcss keeps the family as written; strip the CSS quotes and fall back
-    /// to Pango's default family when it is empty.
-    fn family_name(family: &str) -> String {
-        let trimmed = family.trim().trim_matches(['"', '\'']).trim();
-        if trimmed.is_empty() {
-            "Sans".to_string()
-        } else {
-            trimmed.to_string()
+    /// Resolves a computed family stack to the one family Pango loads (T10).
+    ///
+    /// The list is walked in author order: a CSS generic keyword maps
+    /// straight to its Pango/fontconfig alias, a named family is used only
+    /// when fontconfig really has it — a best-match guess must not count, or
+    /// the first candidate would always "match" and the stack would never
+    /// advance. An exhausted list falls back to the sans default.
+    pub fn resolve_family(families: &[String]) -> String {
+        for raw in families {
+            let name = raw.trim().trim_matches(['"', '\'']).trim();
+            if name.is_empty() {
+                continue;
+            }
+            if let Some(generic) = generic_family(name) {
+                return generic.to_string();
+            }
+            if crate::layout::fontconfig::family_available(name) {
+                return name.to_string();
+            }
         }
+        "Sans".to_string()
+    }
+
+    /// CSS generic keywords as the Pango families fontconfig substitutes for
+    /// them, per the T10 mapping (`system-ui`/`ui-sans-serif`/`ui-monospace`
+    /// are the modern aliases of the three classic groups).
+    fn generic_family(name: &str) -> Option<&'static str> {
+        const SANS: [&str; 3] = ["sans-serif", "system-ui", "ui-sans-serif"];
+        const MONO: [&str; 2] = ["monospace", "ui-monospace"];
+        if name.eq_ignore_ascii_case("serif") {
+            Some("Serif")
+        } else if SANS.iter().any(|key| name.eq_ignore_ascii_case(key)) {
+            Some("Sans")
+        } else if MONO.iter().any(|key| name.eq_ignore_ascii_case(key)) {
+            Some("Monospace")
+        } else if name.eq_ignore_ascii_case("cursive") {
+            Some("Cursive")
+        } else if name.eq_ignore_ascii_case("fantasy") {
+            Some("Fantasy")
+        } else {
+            None
+        }
+    }
+}
+
+/// Fontconfig FFI for family resolution and `@font-face` registration (T10).
+///
+/// Signatures follow `/usr/include/fontconfig/fontconfig.h` (fontconfig
+/// 2.18.3) in the same hand-written style as the Pango FFI above. This
+/// build exports no `FcConfigAppFontAddMemory`, so `@font-face` bytes reach
+/// [`add_font_file`] through the cache file on the home disk. A NULL config
+/// selects the current one, where both queries and app-font registrations
+/// land — including the fonts registered by `css_libcss`.
+pub(crate) mod fontconfig {
+    use std::collections::HashMap;
+    use std::ffi::{CStr, CString};
+    use std::os::raw::{c_char, c_int};
+    use std::path::Path;
+    use std::ptr;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Opaque: the engine only passes handles back to fontconfig.
+    #[repr(C)]
+    pub struct FcConfig {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    struct FcPattern {
+        _private: [u8; 0],
+    }
+
+    type FcBool = c_int;
+
+    /// `FcResultMatch`: the pattern lookup found what it looked for.
+    const FC_RESULT_MATCH: c_int = 0;
+    const FC_FAMILY: &[u8] = b"family\0";
+
+    #[link(name = "fontconfig")]
+    extern "C" {
+        fn FcPatternCreate() -> *mut FcPattern;
+        fn FcPatternDestroy(pattern: *mut FcPattern);
+        fn FcPatternAddString(
+            pattern: *mut FcPattern,
+            property: *const c_char,
+            value: *const c_char,
+        ) -> FcBool;
+        fn FcPatternGetString(
+            pattern: *const FcPattern,
+            property: *const c_char,
+            n: c_int,
+            value: *mut *mut c_char,
+        ) -> c_int;
+        fn FcFontMatch(
+            config: *mut FcConfig,
+            pattern: *const FcPattern,
+            result: *mut c_int,
+        ) -> *mut FcPattern;
+        fn FcConfigAppFontAddFile(config: *mut FcConfig, file: *const c_char) -> FcBool;
+    }
+
+    /// Does fontconfig really have this family?
+    ///
+    /// `FcFontMatch` never fails: for an unknown family it returns its best
+    /// guess (metric substitution or plain fallback), which is exactly the
+    /// silent collapse that kept every stack on one font. The match counts
+    /// only when the returned family *is* the requested one, compared the
+    /// way fontconfig compares family names — case-insensitively. Results
+    /// are cached per process: layout asks about the same handful of
+    /// families for every text run.
+    pub fn family_available(family: &str) -> bool {
+        static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+        let key = family.to_ascii_lowercase();
+        let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Some(known) = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&key)
+        {
+            return *known;
+        }
+        let found = family_matches(family);
+        cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(key, found);
+        found
+    }
+
+    fn family_matches(family: &str) -> bool {
+        let Ok(wanted) = CString::new(family) else {
+            return false;
+        };
+        unsafe {
+            let pattern = FcPatternCreate();
+            if pattern.is_null() {
+                return false;
+            }
+            FcPatternAddString(pattern, FC_FAMILY.as_ptr().cast(), wanted.as_ptr());
+            let mut result = 0;
+            let matched = FcFontMatch(ptr::null_mut(), pattern, &mut result);
+            FcPatternDestroy(pattern);
+            if matched.is_null() {
+                return false;
+            }
+            let mut same = false;
+            if result == FC_RESULT_MATCH {
+                let mut index = 0;
+                let mut value: *mut c_char = ptr::null_mut();
+                while FcPatternGetString(
+                    matched,
+                    FC_FAMILY.as_ptr().cast(),
+                    index,
+                    &mut value,
+                ) == FC_RESULT_MATCH
+                    && !value.is_null()
+                {
+                    if CStr::from_ptr(value)
+                        .to_str()
+                        .map(|name| name.eq_ignore_ascii_case(family))
+                        .unwrap_or(false)
+                    {
+                        same = true;
+                        break;
+                    }
+                    value = ptr::null_mut();
+                    index += 1;
+                }
+            }
+            FcPatternDestroy(matched);
+            same
+        }
+    }
+
+    /// Registers one font file (ttf/otf/...) with the app fonts of the
+    /// current config, so a `@font-face` family becomes matchable for
+    /// everything the process lays out from now on.
+    pub fn add_font_file(path: &Path) -> bool {
+        let Some(text) = path.to_str() else {
+            return false;
+        };
+        let Ok(path) = CString::new(text) else {
+            return false;
+        };
+        unsafe { FcConfigAppFontAddFile(ptr::null_mut(), path.as_ptr()) != 0 }
     }
 }
 
