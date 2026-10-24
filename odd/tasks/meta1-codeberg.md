@@ -326,3 +326,15 @@ sería bug de anchura de caja y se corrige ahí.
   usuario). `Risk: item 6` (la aceptación visual no es probable sin más
   fuentes instaladas). Codeberg declara 5 `@font-face` CJK solo-woff2 →
   avisan una vez por familia y degradan (sin decoder woff2 barato).
+- **L17** (2026-10-23): T10 **cerrado**: verificador independiente (muse-spark-1.3-
+  contributor, primera tarea del pool nuevo) **5/5 PASS, 0 bloqueantes** —
+  normalize_font_family semánticamente preservante, FFI de fontconfig sana
+  (firmas contra headers instalados, patrones destruidos, NULLs checkeados),
+  @font-face con caps (10MB/20s), escritura atómica, aviso por familia, sin
+  fetch en páginas sin @font-face, split String/Vec sin divergencia, y el
+  diferencial 61/62 creíble. Advisories: desc NULL sin checkar (preexistente),
+  retorno de FcPatternAddString ignorado (degrada a false), `system-ui` no está
+  en la lista GENERIC del rewriter (mapea igual a Sans). Decisión del usuario:
+  **instalación de fuentes para después** («Dejarlo para después») — la
+  maquinaria queda lista; al instalar paquetes (ttf-liberation/ttf-dejavu/
+  noto-fonts) la tipografía real se verá sin más cambios de código.
