@@ -130,9 +130,9 @@ func max(a, b float64) float64 {
 // (border height plus vertical margins). It mirrors the block path of
 // layout_node (src/layout.rs:156-303): display:none takes nothing, replaced
 // <img> elements take their own box, inline boxes exist only inside the
-// flush of their block container (unless blockified as a flex item), flex
-// containers open the flex formatting context, and grid containers fall
-// through to the plain block flow until T4c owns them.
+// flush of their block container (unless blockified as a grid or flex
+// item), flex containers open the flex formatting context, and grid
+// containers open the grid formatting context.
 func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID, originX, originY, availableWidth float64, f forced) float64 {
 	style := &styles[id]
 	if style.Display == css.DisplayNone {
@@ -147,7 +147,9 @@ func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID
 	if style.Flex != nil {
 		return st.layoutFlexContainer(doc, styles, id, originX, originY, availableWidth, f)
 	}
-	// T4c: a grid container lays out as plain block for now.
+	if style.Grid != nil {
+		return st.layoutGridContainer(doc, styles, id, originX, originY, availableWidth, f)
+	}
 
 	content := computeContentBox(style, originX, originY, availableWidth, f)
 	borderX, borderW := content.borderX, content.borderW

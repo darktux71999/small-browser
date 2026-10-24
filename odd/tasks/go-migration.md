@@ -36,7 +36,7 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
 | T3 | Pegamento CSS: libcss via cgo + rewriter (gap/font-family/@font-face) + `Style` + mapping de estilos computados | S3 | 1 | ✅ (31 tests; glm murió a mitad → completado por muse-spark con 6 causas raíz) |
 | T4a | `text` (shaper Pango) + `layout` bloque/caja/runs | S3,S1 | 2 | ✅ (17 tests; diferencial humo 14 fixtures idénticos) |
 | T4b | `layout`: contexto flex (fila/columna, wrap, gap, grow, justify, align) | S3,S1 | 2 | ✅ (19 tests: 10 flex espejo de tests/flex.rs + 9 previos) |
-| T4c | `layout`: contexto grid (px/fr/auto/repeat, span, gap) | S3,S1 | 2 | pendiente |
+| T4c | `layout`: contexto grid (px/fr/auto/repeat, span, gap) | S3,S1 | 2 | ✅ (27 tests layout: 8 grid + 10 flex + 9 block) |
 | T5 | `paint`: Cairo via cgo + CLI `--png`/`--dump` | S1,S3 | 3 | pendiente |
 | T6 | `shell`: SDL3 via cgo (headers reales, sin offsets a mano) + scroll | S3 | 3 | pendiente |
 | T7 | Tests portados + diferencial completo + paridad Meta 1 | S4,S5,S7 | 4 | pendiente |
@@ -103,3 +103,14 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   módulo verde; vet/race/gofmt limpios. Quirk documentado del oráculo: los
   `<img>` inline hijos de flex se descartan en la recolección (el port lo
   replica, confirmar en T7). `Risk: none`.
+- **L6** (2026-10-24): **T4c grid entregado** (muse-spark) — `go/layout` queda
+  **completo** (block+flex+grid): `grid.go` port paso a paso del oráculo
+  (src/layout.rs:933-1297), pistas px/fr/auto con distribución de espacio
+  libre solo cuando used < content.w (idéntico al oráculo), spans acotados
+  (col a ncols, row a 1000), altos de fila midiendo solo `row_span == 1`
+  (replicando la limitación R3-1 del oráculo, no «arreglándola» — paridad
+  primero), pistas auto resueltas tras la colocación, ítems anónimos con el
+  sentinel NoNode, y `flexViewOf` como adaptador (el equivalente del
+  `flex_view_of` del oráculo) para reusar todos los helpers de medida. 8 tests
+  espejo (6 en RED antes), 27 en total en layout; módulo entero verde; vet/
+  race/gofmt limpios. `Risk: none`.
