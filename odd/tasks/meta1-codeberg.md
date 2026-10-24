@@ -338,4 +338,23 @@ sería bug de anchura de caja y se corrige ahí.
   **instalación de fuentes para después** («Dejarlo para después») — la
   maquinaria queda lista; al instalar paquetes (ttf-liberation/ttf-dejavu/
   noto-fonts) la tipografía real se verá sin más cambios de código.
-| T11 | `border` (ancho/estilo/color por lado) + `border-radius` uniforme — resto de S10 | S10 | 4 | delegado (muse-spark-1.3-contributor) |
+| T11 | `border` (ancho/estilo/color por lado) + `border-radius` uniforme — resto de S10 | S10 | 4 | ✅ (11 tests RED→GREEN; diferencial 67 idénticos + 3 por diseño; 185/0 suite; codeberg idéntico — bloqueado por var()) |
+- **L18** (2026-10-23): **T11 bordes/redondeos entregado** (muse-spark-1.3-
+  contributor): anillo por lado (width/style/color desde los getters de libcss;
+  thin/medium/thick→1/3/5px, CURRENT_COLOR→color de texto, `border-style:none`
+  anula el ancho usado — regla CSS de used-value, absorbe el bug de libcss que
+  reporta 2px sin declarar), `border-radius` con cascada manual (libcss no
+  trae getter) con escalado por solape de esquinas CSS, clip de fondo/imagen/
+  anillo en esquinas redondeadas, y degradación documentada: estilos no-solid
+  → solid sin aviso, radios elípticos → valor horizontal. `--dump` documentado:
+  `w` sin cambios (el borde vive dentro), `h` crece como el padding. Suites:
+  **185 passed / 0 failed** (20 suites). Diferencial: 67/71 idénticos en dump y
+  png; los 3 nuevos por diseño + net-latin1 con fallo idéntico; stderr idéntico
+  en los 71. **Hallazgo de corpus**: codeberg.org queda byte-idéntico (0
+  píxeles) porque **Forgejo escribe todos los bordes con `var(--color-*)`**
+  (406 declaraciones) y libcss 0.9.2 descarta las declaraciones con var() —
+  el desbloqueo real de bordes en la página son las **custom properties**
+  (fila 14 del Pareto, que salta de media-baja a prioritaria por este dato).
+  `Risk: none`. Pendientes medidos: var()/custom properties (el desbloqueo),
+  rem/em en el lector de radios (los botones usan `.28571429rem`),
+  background-position/size (resto de T9).

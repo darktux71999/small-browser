@@ -18,7 +18,8 @@ use std::os::raw::{c_int, c_void};
 use std::rc::Rc;
 
 use crate::css::{
-    AlignItems, Display, FlexBasis, FlexDirection, GridTrack, JustifyContent, Style,
+    AlignItems, BorderRadius, BorderStyle, Display, FlexBasis, FlexDirection, GridTrack,
+    JustifyContent, Style,
 };
 use crate::dom::{Document, NodeId};
 use crate::img::{Image, ImageSet};
@@ -34,6 +35,19 @@ pub struct LayoutBox {
     pub text: Option<String>,
     pub color: crate::css::Color,
     pub background: Option<crate::css::Color>,
+    /// Per-side border widths in CSS pixels (top, right, bottom, left). The
+    /// ring sits INSIDE the reported box (`x`/`y`/`w`/`h` keep their meaning,
+    /// so unbordered pages are byte-identical); the content box shrinks by
+    /// these widths. Paint draws a side only when its style is visible.
+    pub border_width: [f64; 4],
+    /// Per-side border styles; only [`BorderStyle::Solid`] paints.
+    pub border_style: [BorderStyle; 4],
+    /// Per-side border colours.
+    pub border_color: [crate::css::Color; 4],
+    /// Per-corner `border-radius` (top-left, top-right, bottom-right,
+    /// bottom-left), as specified. Paint resolves percentages against the box
+    /// and clips the background fill and the ring to the rounded shape.
+    pub border_radius: [BorderRadius; 4],
     /// Decoded `background-image` pixels (S10), painted as the tiled box
     /// background behind the content; `None` when the element has no usable
     /// background image.
@@ -190,7 +204,7 @@ fn layout_node(
     let content_w = content.w;
 
     let border_y = origin_y + style.margin[0];
-    let mut cursor_y = border_y + style.padding[0];
+    let mut cursor_y = content.y;
 
     // Placeholder so children find a stable index; height filled after flow.
     let box_index = out.len();
@@ -212,6 +226,10 @@ fn layout_node(
         bold: style.bold,
         centered: style.inline_align,
         image: None,
+        border_width: style.border_width,
+        border_style: style.border_style,
+        border_color: style.border_color,
+        border_radius: style.border_radius,
     });
 
     let mut run = String::new();
@@ -271,7 +289,8 @@ fn layout_node(
             flush_text(shaper, style, content_x, cursor_y, content_w, &mut run, out, runs);
     }
 
-    let mut border_h = cursor_y - border_y + style.padding[2];
+    let mut border_h =
+        cursor_y - border_y + style.padding[2] + style.border_width[2];
     if let Some(h) = style.height {
         border_h = border_h.max(h);
     }
@@ -318,9 +337,11 @@ fn content_box(
     ContentBox {
         border_x,
         border_w,
-        y: origin_y + style.margin[0] + style.padding[0],
-        x: border_x + style.padding[3],
-        w: (border_w - style.padding[1] - style.padding[3]).max(1.0),
+        y: origin_y + style.margin[0] + style.border_width[0] + style.padding[0],
+        x: border_x + style.border_width[3] + style.padding[3],
+        w: (border_w - style.padding[1] - style.padding[3] - style.border_width[1]
+            - style.border_width[3])
+        .max(1.0),
     }
 }
 
@@ -395,6 +416,10 @@ fn layout_flex_container(
         bold: style.bold,
         centered: style.inline_align,
         image: None,
+        border_width: style.border_width,
+        border_style: style.border_style,
+        border_color: style.border_color,
+        border_radius: style.border_radius,
     });
 
     // The inner main size of the container: the width of a row container, the
@@ -591,6 +616,10 @@ fn layout_flex_container(
                 bold: item.style.bold,
                 centered: false,
                 image: None,
+                border_width: [0.0; 4],
+                border_style: [BorderStyle::None; 4],
+                border_color: [item.style.color; 4],
+                border_radius: [BorderRadius::Px(0.0); 4],
             });
             let mut run = text.clone();
             flush_text(
@@ -624,7 +653,7 @@ fn layout_flex_container(
         content_height = content_height.max(bottom - content.y);
     }
 
-    let mut border_h = content_height + style.padding[0] + style.padding[2];
+    let mut border_h = content_height + style.padding[0] + style.padding[2] + style.border_width[0] + style.border_width[2];
     if let Some(h) = style.height {
         border_h = border_h.max(h);
     }
@@ -646,10 +675,16 @@ fn collect_flex_items(doc: &Document, styles: &[Style], id: NodeId) -> Vec<FlexI
             text.clear();
             return;
         }
+        // An anonymous item has no box of its own in CSS: the container's
+        // border and radius must not wrap each text fragment, so they are
+        // stripped here (the container box itself still paints them).
+        let mut style = styles[id].clone();
+        style.border_width = [0.0; 4];
+        style.border_radius = [BorderRadius::Px(0.0); 4];
         items.push(FlexItemBox {
             node: usize::MAX,
             text: Some(text.clone()),
-            style: styles[id].clone(),
+            style,
             base: 0.0,
             main: 0.0,
             cross: 0.0,
@@ -939,6 +974,10 @@ fn layout_grid_container(
         bold: style.bold,
         centered: style.inline_align,
         image: None,
+        border_width: style.border_width,
+        border_style: style.border_style,
+        border_color: style.border_color,
+        border_radius: style.border_radius,
     });
 
     let mut items = collect_grid_items(doc, styles, id);
@@ -1058,6 +1097,10 @@ fn layout_grid_container(
                 bold: item.style.bold,
                 centered: false,
                 image: None,
+                border_width: [0.0; 4],
+                border_style: [BorderStyle::None; 4],
+                border_color: [item.style.color; 4],
+                border_radius: [BorderRadius::Px(0.0); 4],
             });
             let mut run = text.clone();
             flush_text(
@@ -1091,7 +1134,7 @@ fn layout_grid_container(
         content_height = content_height.max(bottom - content.y);
     }
 
-    let mut border_h = content_height + style.padding[0] + style.padding[2];
+    let mut border_h = content_height + style.padding[0] + style.padding[2] + style.border_width[0] + style.border_width[2];
     if let Some(h) = style.height {
         border_h = border_h.max(h);
     }
@@ -1113,10 +1156,14 @@ fn collect_grid_items(doc: &Document, styles: &[Style], id: NodeId) -> Vec<GridI
             text.clear();
             return;
         }
+        // Same as the flex anonymous item: no own box, so no border/radius.
+        let mut style = styles[id].clone();
+        style.border_width = [0.0; 4];
+        style.border_radius = [BorderRadius::Px(0.0); 4];
         items.push(GridItemBox {
             node: usize::MAX,
             text: Some(text.clone()),
-            style: styles[id].clone(),
+            style,
             col_span: 1,
             row_span: 1,
             col: 0,
@@ -1419,7 +1466,7 @@ fn layout_image(
         content.w,
         forced.width.map(|w| w - style.padding[1] - style.padding[3]),
     );
-    let y = origin_y + style.margin[0] + style.padding[0];
+    let y = origin_y + style.margin[0] + style.border_width[0] + style.padding[0];
 
     out.push(LayoutBox {
         node: id,
@@ -1439,6 +1486,10 @@ fn layout_image(
         bold: style.bold,
         centered: style.inline_align,
         image,
+        border_width: style.border_width,
+        border_style: style.border_style,
+        border_color: style.border_color,
+        border_radius: style.border_radius,
     });
 
     h + style.margin[0] + style.margin[2]
@@ -1570,6 +1621,10 @@ fn flush_text(
             bold: style.bold,
             centered: false,
             image: None,
+            border_width: [0.0; 4],
+            border_style: [BorderStyle::None; 4],
+            border_color: [style.color; 4],
+            border_radius: [BorderRadius::Px(0.0); 4],
         });
     }
 

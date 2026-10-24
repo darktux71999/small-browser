@@ -173,6 +173,33 @@ fn parse_selector(text: &str) -> Option<Selector> {
 
 // ---------- computed style ----------
 
+/// Whether one side of a box shows its border. `none` (and `hidden`) paint
+/// nothing; every other CSS border style (`solid`, `dashed`, `dotted`,
+/// `double`, `groove`, `ridge`, `inset`, `outset`) paints as a solid stroke
+/// (T11 minimal slice: the width and colour carry the shape, the dash pattern
+/// does not).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BorderStyle {
+    #[default]
+    None,
+    Solid,
+}
+
+/// One corner of `border-radius`, as specified: an absolute length in CSS
+/// pixels, or a percentage resolved at paint time against the box. Elliptical
+/// radii (`8px / 4px`) keep only the horizontal radius.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BorderRadius {
+    Px(f64),
+    Pct(f64),
+}
+
+impl Default for BorderRadius {
+    fn default() -> Self {
+        BorderRadius::Px(0.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Display {
     Block,
@@ -351,6 +378,19 @@ pub struct Style {
     pub height: Option<f64>,
     pub margin: [f64; 4],  // top, right, bottom, left
     pub padding: [f64; 4],
+    /// Per-side border widths in CSS pixels (top, right, bottom, left).
+    /// A border paints only where its style is not [`BorderStyle::None`].
+    pub border_width: [f64; 4],
+    /// Per-side border styles; every visible CSS style maps to
+    /// [`BorderStyle::Solid`] (see its docs).
+    pub border_style: [BorderStyle; 4],
+    /// Per-side border colours; the default is the text colour
+    /// (`currentColor`), resolved where the style is computed.
+    pub border_color: [Color; 4],
+    /// Per-corner `border-radius` (top-left, top-right, bottom-right,
+    /// bottom-left), as specified. The border ring sits inside the reported
+    /// box; the content box shrinks by the border widths.
+    pub border_radius: [BorderRadius; 4],
     pub color: Color,
     pub background: Option<Color>,
     /// The `background-image` URL (S10). The libcss path hands it resolved
@@ -415,6 +455,10 @@ impl Default for Style {
             height: None,
             margin: [0.0; 4],
             padding: [0.0; 4],
+            border_width: [0.0; 4],
+            border_style: [BorderStyle::None; 4],
+            border_color: [Color::BLACK; 4],
+            border_radius: [BorderRadius::Px(0.0); 4],
             color: Color::BLACK,
             background: None,
             background_image: None,
@@ -465,6 +509,11 @@ pub fn compute(doc: &Document, sheet: &Stylesheet) -> Vec<Style> {
             style.bold = inherited.bold;
         }
         apply_ua_defaults(&mut style, &doc.nodes[id].tag);
+        // `currentColor`: a border without an explicit colour follows the
+        // text colour (the inherited one here; an author `color` on the same
+        // element does not retro-update it in this legacy cascade — the
+        // libcss path resolves the computed value properly).
+        style.border_color = [style.color; 4];
 
         let mut matched: Vec<(&Rule, bool)> = sheet
             .rules
@@ -632,6 +681,71 @@ fn apply(style: &mut Style, decl: &Declaration) {
         "padding-right" => style.padding[1] = parse_px(value).unwrap_or(0.0),
         "padding-bottom" => style.padding[2] = parse_px(value).unwrap_or(0.0),
         "padding-left" => style.padding[3] = parse_px(value).unwrap_or(0.0),
+        "border" => apply_border_shorthand(style, value),
+        "border-width" => style.border_width = parse_border_width_box(value),
+        "border-style" => style.border_style = parse_border_style_box(value),
+        "border-color" => {
+            if let Some(colors) = parse_border_color_box(value) {
+                style.border_color = colors;
+            }
+        }
+        "border-top" => apply_border_side(style, 0, value),
+        "border-right" => apply_border_side(style, 1, value),
+        "border-bottom" => apply_border_side(style, 2, value),
+        "border-left" => apply_border_side(style, 3, value),
+        "border-top-width" => style.border_width[0] = parse_border_width(value).unwrap_or(0.0),
+        "border-right-width" => style.border_width[1] = parse_border_width(value).unwrap_or(0.0),
+        "border-bottom-width" => style.border_width[2] = parse_border_width(value).unwrap_or(0.0),
+        "border-left-width" => style.border_width[3] = parse_border_width(value).unwrap_or(0.0),
+        "border-top-style" => style.border_style[0] = parse_border_style(value),
+        "border-right-style" => style.border_style[1] = parse_border_style(value),
+        "border-bottom-style" => style.border_style[2] = parse_border_style(value),
+        "border-left-style" => style.border_style[3] = parse_border_style(value),
+        "border-top-color" => {
+            if let Some(c) = parse_color(value) {
+                style.border_color[0] = c;
+            }
+        }
+        "border-right-color" => {
+            if let Some(c) = parse_color(value) {
+                style.border_color[1] = c;
+            }
+        }
+        "border-bottom-color" => {
+            if let Some(c) = parse_color(value) {
+                style.border_color[2] = c;
+            }
+        }
+        "border-left-color" => {
+            if let Some(c) = parse_color(value) {
+                style.border_color[3] = c;
+            }
+        }
+        "border-radius" => {
+            if let Some(radii) = parse_border_radius(value) {
+                style.border_radius = radii;
+            }
+        }
+        "border-top-left-radius" => {
+            if let Some(r) = parse_border_radius_length(value) {
+                style.border_radius[0] = r;
+            }
+        }
+        "border-top-right-radius" => {
+            if let Some(r) = parse_border_radius_length(value) {
+                style.border_radius[1] = r;
+            }
+        }
+        "border-bottom-right-radius" => {
+            if let Some(r) = parse_border_radius_length(value) {
+                style.border_radius[2] = r;
+            }
+        }
+        "border-bottom-left-radius" => {
+            if let Some(r) = parse_border_radius_length(value) {
+                style.border_radius[3] = r;
+            }
+        }
         "color" => {
             if let Some(c) = parse_color(value) {
                 style.color = c;
@@ -819,12 +933,179 @@ fn parse_box(value: &str) -> [f64; 4] {
         .split_whitespace()
         .map(|p| parse_px(p).unwrap_or(0.0))
         .collect();
+    expand_box(parts)
+}
+
+/// Expands 1–4 values the CSS box way (like `margin`/`padding`); anything else
+/// is all zeros.
+fn expand_box(parts: Vec<f64>) -> [f64; 4] {
     match parts.as_slice() {
         [a] => [*a; 4],
         [v, h] => [*v, *h, *v, *h],
         [t, h, b] => [*t, *h, *b, *h],
         [t, r, b, l] => [*t, *r, *b, *l],
         _ => [0.0; 4],
+    }
+}
+
+/// One `border-width` token: a length, or the `thin`/`medium`/`thick` keywords
+/// (1/3/5px, the values the CSS spec suggests).
+fn parse_border_width(value: &str) -> Option<f64> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "thin" => Some(1.0),
+        "medium" => Some(3.0),
+        "thick" => Some(5.0),
+        _ => parse_px(value),
+    }
+}
+
+fn parse_border_width_box(value: &str) -> [f64; 4] {
+    expand_box(
+        value
+            .split_whitespace()
+            .map(|p| parse_border_width(p).unwrap_or(0.0))
+            .collect(),
+    )
+}
+
+/// One `border-style` token: `none`/`hidden` paint nothing, every other known
+/// style degrades to solid (see [`BorderStyle`]), unknown tokens to none.
+fn parse_border_style(value: &str) -> BorderStyle {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" | "hidden" => BorderStyle::None,
+        "solid" | "dashed" | "dotted" | "double" | "groove" | "ridge" | "inset" | "outset" => {
+            BorderStyle::Solid
+        }
+        _ => BorderStyle::None,
+    }
+}
+
+fn parse_border_style_box(value: &str) -> [BorderStyle; 4] {
+    let parts: Vec<BorderStyle> = value.split_whitespace().map(parse_border_style).collect();
+    match parts.as_slice() {
+        [a] => [*a; 4],
+        [v, h] => [*v, *h, *v, *h],
+        [t, h, b] => [*t, *h, *b, *h],
+        [t, r, b, l] => [*t, *r, *b, *l],
+        _ => [BorderStyle::None; 4],
+    }
+}
+
+/// Splits a shorthand value on whitespace, keeping parenthesised groups
+/// (`rgb(255, 0, 0)`) together.
+fn split_shorthand_tokens(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    for token in value.split_whitespace() {
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(token);
+        depth += token.chars().filter(|c| *c == '(').count();
+        depth = depth.saturating_sub(token.chars().filter(|c| *c == ')').count());
+        if depth == 0 {
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// A `border-color` value: 1–4 colours expanded the box way. `None` when any
+/// token is not a colour (the declaration is dropped, like CSS).
+fn parse_border_color_box(value: &str) -> Option<[Color; 4]> {
+    let mut colors = Vec::new();
+    for token in split_shorthand_tokens(value) {
+        colors.push(parse_color(&token)?);
+    }
+    Some(match colors.as_slice() {
+        [a] => [*a; 4],
+        [v, h] => [*v, *h, *v, *h],
+        [t, h, b] => [*t, *h, *b, *h],
+        [t, r, b, l] => [*t, *r, *b, *l],
+        _ => return None,
+    })
+}
+
+/// Applies a `border` (or `border-top/...`) shorthand to every side (or to
+/// side `index`): any of width, style and colour may appear, in any order;
+/// absent parts keep their previous value.
+fn apply_border_shorthand(style: &mut Style, value: &str) {
+    apply_border_side(style, 0, value);
+    apply_border_side(style, 1, value);
+    apply_border_side(style, 2, value);
+    apply_border_side(style, 3, value);
+}
+
+fn apply_border_side(style: &mut Style, index: usize, value: &str) {
+    for token in split_shorthand_tokens(value) {
+        if let Some(w) = parse_border_width(&token) {
+            style.border_width[index] = w;
+        } else if let Some(c) = parse_color(&token) {
+            style.border_color[index] = c;
+        } else if is_border_style_token(&token) {
+            style.border_style[index] = parse_border_style(&token);
+        }
+        // Unknown tokens are ignored (a lenient shorthand); an unknown style
+        // keyword keeps its previous value instead of clearing it.
+    }
+}
+
+/// Is this token a known `border-style` keyword (including the ones that
+/// degrade to solid)?
+fn is_border_style_token(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "none"
+            | "hidden"
+            | "solid"
+            | "dashed"
+            | "dotted"
+            | "double"
+            | "groove"
+            | "ridge"
+            | "inset"
+            | "outset"
+    )
+}
+
+/// One `border-radius` corner: an absolute length, or a percentage (kept
+/// specified; paint resolves it against the box). Negative values are invalid.
+pub fn parse_border_radius_length(value: &str) -> Option<BorderRadius> {
+    let v = value.trim();
+    if let Some(number) = v.strip_suffix('%') {
+        let pct: f64 = number.trim().parse().ok()?;
+        if !pct.is_finite() || pct < 0.0 {
+            return None;
+        }
+        return Some(BorderRadius::Pct(pct));
+    }
+    let px = parse_px(v)?;
+    if !px.is_finite() || px < 0.0 {
+        return None;
+    }
+    Some(BorderRadius::Px(px))
+}
+
+/// A `border-radius` value: 1–4 lengths (top-left, top-right, bottom-right,
+/// bottom-left, the CSS order) with an optional `/ <vertical>` half that is
+/// dropped (elliptical radii degrade to the horizontal radius). `None` when
+/// any length is invalid.
+pub fn parse_border_radius(value: &str) -> Option<[BorderRadius; 4]> {
+    let horizontal = value.split('/').next().unwrap_or(value);
+    let mut radii = Vec::new();
+    for part in horizontal.split_whitespace() {
+        radii.push(parse_border_radius_length(part)?);
+    }
+    match radii.as_slice() {
+        [a] => Some([*a; 4]),
+        [v, h] => Some([*v, *h, *v, *h]),
+        [t, h, b] => Some([*t, *h, *b, *h]),
+        [t, r, b, l] => Some([*t, *r, *b, *l]),
+        _ => None,
     }
 }
 

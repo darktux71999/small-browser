@@ -22,7 +22,7 @@ Referencia de prioridades para browser-lite. Evita la ingeniería inversa ciega
 | 3 | Texto inline: wrap, `font-size/weight/family`, `line-height`, `text-align` | top de propiedades | ✅ familias resueltas vía fontconfig (stacks + genéricas) | ✅ |
 | 4 | **`@font-face` / webfonts** | ~50%+ de páginas (`font-display: swap` en 49.6%) | ⚠️ ttf/otf ✅ (app-fonts fontconfig); woff2/local() ❌ con aviso | media-alta |
 | 5 | Fondos: `background-color/image/repeat/position/size` | 96/90/85/91/82% | ⚠️ color+image+repeat ✅, position/size ❌ | media-alta |
-| 6 | `border` / `border-radius` | 71% / 65% (px dominante 65–71%) | ❌ (S10) | **alta** |
+| 6 | `border` / `border-radius` | 71% / 65% (px dominante 65–71%) | ⚠️ plain-CSS ✅; bloqueado en páginas reales por `var()` y unidades rem | media-alta |
 | 7 | **Flexbox** | 97% de pageviews | ✅ mínimo (gap, grow, wrap) | — |
 | 8 | **Grid** | ~50–90% y creciendo | ✅ mínimo (px/fr/auto/repeat, span) | media (avisos R3-*) |
 | 9 | `position` rel/abs/fixed/sticky + `z-index` + `overflow` | Baseline desde v1; sticky en todo nav moderno | ❌/parcial | **alta** |
@@ -30,7 +30,7 @@ Referencia de prioridades para browser-lite. Evita la ingeniería inversa ciega
 | 11 | Gradientes (`linear-gradient`) | ~73% de páginas | ❌ | media |
 | 12 | `box-shadow` | muy común en tarjetas/botones | ❌ | media |
 | 13 | Pseudo-elementos `::before/::after` | iconos (Font Awesome solo: 8.5–9.3% de páginas) | ❌ | media |
-| 14 | Custom properties (`var()`) | colores en 1 de 5 páginas | ❌/parcial (libcss) | media-baja |
+| 14 | Custom properties (`var()`) | colores en 1 de 5 páginas; **Codeberg: 406 bordes con `var()` que libcss descarta** | ❌ | **alta** (dato de corpus, subió de media-baja) |
 | 15 | Opacity / transform / filter (`blur` 4%) | base de transiciones | parcial (alpha ✅) | media-baja |
 | 16 | Transiciones / animaciones | `transition` 85–90%, `animation` 70–77% | ❌ | baja (pulido, no estructura) |
 | 17 | Tablas y listas semánticas | sitios de contenido/docs | ❌/parcial | media-baja |

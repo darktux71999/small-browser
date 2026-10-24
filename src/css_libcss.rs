@@ -45,8 +45,8 @@ use std::time::Duration;
 use url::Url;
 
 use crate::css::{
-    AlignItems, Color, Display, FlexBasis, FlexDirection, FlexItem, FlexStyle, FlexWrap,
-    GridItem, GridStyle, JustifyContent, Style, TextAlign,
+    AlignItems, BorderRadius, BorderStyle, Color, Display, FlexBasis, FlexDirection, FlexItem,
+    FlexStyle, FlexWrap, GridItem, GridStyle, JustifyContent, Style, TextAlign,
 };
 use crate::dom::{Document, Node, NodeId};
 
@@ -156,6 +156,20 @@ const CSS_COLUMN_GAP_SET: u8 = 0x1;
 // css_min_width_e / css_max_width_e
 const CSS_MIN_WIDTH_SET: u8 = 0x1;
 const CSS_MAX_WIDTH_SET: u8 = 0x1;
+
+// css_border_width_e
+const CSS_BORDER_WIDTH_THIN: u8 = 0x1;
+const CSS_BORDER_WIDTH_MEDIUM: u8 = 0x2;
+const CSS_BORDER_WIDTH_THICK: u8 = 0x3;
+const CSS_BORDER_WIDTH_WIDTH: u8 = 0x4;
+
+// css_border_color_e (aliases of the background colour values)
+const CSS_BORDER_COLOR_COLOR: u8 = 0x01;
+const CSS_BORDER_COLOR_CURRENT_COLOR: u8 = 0x02;
+
+// css_border_style_e
+const CSS_BORDER_STYLE_NONE: u8 = 0x1;
+const CSS_BORDER_STYLE_HIDDEN: u8 = 0x2;
 
 // css_align_items_e
 const CSS_ALIGN_ITEMS_STRETCH: u8 = 0x1;
@@ -653,6 +667,40 @@ extern "C" {
         length: *mut CssFixed,
         unit: *mut CssUnit,
     ) -> u8;
+    fn css_computed_border_top_width(
+        style: *const CssComputedStyle,
+        length: *mut CssFixed,
+        unit: *mut CssUnit,
+    ) -> u8;
+    fn css_computed_border_right_width(
+        style: *const CssComputedStyle,
+        length: *mut CssFixed,
+        unit: *mut CssUnit,
+    ) -> u8;
+    fn css_computed_border_bottom_width(
+        style: *const CssComputedStyle,
+        length: *mut CssFixed,
+        unit: *mut CssUnit,
+    ) -> u8;
+    fn css_computed_border_left_width(
+        style: *const CssComputedStyle,
+        length: *mut CssFixed,
+        unit: *mut CssUnit,
+    ) -> u8;
+    fn css_computed_border_top_color(style: *const CssComputedStyle, color: *mut CssColor) -> u8;
+    fn css_computed_border_right_color(
+        style: *const CssComputedStyle,
+        color: *mut CssColor,
+    ) -> u8;
+    fn css_computed_border_bottom_color(
+        style: *const CssComputedStyle,
+        color: *mut CssColor,
+    ) -> u8;
+    fn css_computed_border_left_color(style: *const CssComputedStyle, color: *mut CssColor) -> u8;
+    fn css_computed_border_top_style(style: *const CssComputedStyle) -> u8;
+    fn css_computed_border_right_style(style: *const CssComputedStyle) -> u8;
+    fn css_computed_border_bottom_style(style: *const CssComputedStyle) -> u8;
+    fn css_computed_border_left_style(style: *const CssComputedStyle) -> u8;
     fn css_computed_align_items(style: *const CssComputedStyle) -> u8;
     fn css_computed_flex_basis(
         style: *const CssComputedStyle,
@@ -2464,6 +2512,182 @@ fn selector_specificity(selector: &str) -> (u32, u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
+// Border radius (S10)
+// ---------------------------------------------------------------------------
+
+/// libcss 0.9.2 computes no `border-radius` (there is no getter for it), so
+/// the radii are read here, straight from the author stylesheets — the same
+/// manual cascade [`apply_grid_styles`] uses.
+///
+/// The cascade is the author's document order with specificity and
+/// `!important`, resolved per element: every style rule whose selector matches
+/// the element contributes its radius declarations, and so does the element's
+/// own `style=""` attribute (which wins over plain author rules but loses to
+/// author `!important`, per CSS). Percentages stay specified and are resolved
+/// against the box at paint time.
+fn apply_border_radius_styles(doc: &Document, sheets: &[&str], out: &mut [Style]) {
+    #[derive(Clone)]
+    struct Bid {
+        important: bool,
+        inline: bool,
+        specificity: (u32, u32, u32),
+        order: u32,
+        shorthand: Option<String>,
+        corners: [Option<String>; 4],
+    }
+
+    let mut best: Vec<Option<Bid>> = vec![None; out.len()];
+    let mut order = 0u32;
+
+    let mut consider = |id: NodeId, bid: Bid, best: &mut Vec<Option<Bid>>| {
+        if id >= best.len() {
+            return;
+        }
+        let wins = match &best[id] {
+            None => true,
+            Some(prev) => (bid.important, bid.inline, bid.specificity, bid.order)
+                > (prev.important, prev.inline, prev.specificity, prev.order),
+        };
+        if wins {
+            // A rule only carries the radius properties it declares: keep the
+            // winner's values, filling the gaps from the previous best.
+            let merged = match &best[id] {
+                Some(prev) => Bid {
+                    shorthand: bid.shorthand.or_else(|| prev.shorthand.clone()),
+                    corners: [
+                        bid.corners[0].clone().or_else(|| prev.corners[0].clone()),
+                        bid.corners[1].clone().or_else(|| prev.corners[1].clone()),
+                        bid.corners[2].clone().or_else(|| prev.corners[2].clone()),
+                        bid.corners[3].clone().or_else(|| prev.corners[3].clone()),
+                    ],
+                    ..bid
+                },
+                None => bid,
+            };
+            best[id] = Some(merged);
+        }
+    };
+
+    for css in sheets {
+        for_each_style_rule(css, &mut |prelude, body| {
+            order = order.saturating_add(1);
+            let decls = radius_declarations(body);
+            if decls.is_empty() {
+                return;
+            }
+            for selector in prelude.split(',') {
+                let selector = selector.trim();
+                if selector.is_empty() {
+                    continue;
+                }
+                let specificity = selector_specificity(selector);
+                for id in doc.query_selector_all(selector) {
+                    consider(
+                        id,
+                        Bid {
+                            important: decls.important,
+                            inline: false,
+                            specificity,
+                            order,
+                            shorthand: decls.shorthand.clone(),
+                            corners: decls.corners.clone(),
+                        },
+                        &mut best,
+                    );
+                }
+            }
+        });
+    }
+
+    // The `style=""` attribute: an inline declaration list, parsed like the
+    // inline sheets above but matched to its own element.
+    for id in 0..doc.nodes.len() {
+        let Some(decls) = doc.nodes[id].attr("style") else {
+            continue;
+        };
+        if decls.trim().is_empty() {
+            continue;
+        }
+        let mut inline = String::new();
+        rewrite_declarations(decls, &mut inline);
+        let decls = radius_declarations(&inline);
+        if decls.is_empty() {
+            continue;
+        }
+        consider(
+            id,
+            Bid {
+                important: decls.important,
+                inline: true,
+                specificity: (0, 0, 0),
+                order: u32::MAX,
+                shorthand: decls.shorthand,
+                corners: decls.corners,
+            },
+            &mut best,
+        );
+    }
+
+    for (id, bid) in best.into_iter().enumerate() {
+        let Some(bid) = bid else { continue };
+        let mut radii = bid
+            .shorthand
+            .as_deref()
+            .and_then(crate::css::parse_border_radius)
+            .unwrap_or([BorderRadius::Px(0.0); 4]);
+        for (index, corner) in bid.corners.iter().enumerate() {
+            if let Some(text) = corner {
+                if let Some(radius) = crate::css::parse_border_radius_length(text) {
+                    radii[index] = radius;
+                }
+            }
+        }
+        out[id].border_radius = radii;
+    }
+}
+
+/// The radius declarations of one declaration block: the raw shorthand plus
+/// one raw text per corner (top-left, top-right, bottom-right, bottom-left).
+/// `important` is set when any of them carries `!important`.
+#[derive(Default)]
+struct RadiusDecls {
+    important: bool,
+    shorthand: Option<String>,
+    corners: [Option<String>; 4],
+}
+
+impl RadiusDecls {
+    fn is_empty(&self) -> bool {
+        self.shorthand.is_none() && self.corners.iter().all(|c| c.is_none())
+    }
+}
+
+fn radius_declarations(body: &str) -> RadiusDecls {
+    let mut decls = RadiusDecls::default();
+    for part in split_declarations(body) {
+        let Some((property, value)) = split_declaration(&part) else {
+            continue;
+        };
+        let (value, important) = split_important(value);
+        let index = match property.trim().to_ascii_lowercase().as_str() {
+            "border-radius" => {
+                decls.shorthand = Some(value.trim().to_string());
+                decls.important |= important;
+                continue;
+            }
+            "border-top-left-radius" => 0,
+            "border-top-right-radius" => 1,
+            "border-bottom-right-radius" => 2,
+            "border-bottom-left-radius" => 3,
+            _ => continue,
+        };
+        decls.corners[index] = Some(value.trim().to_string());
+        decls.important |= important;
+    }
+    decls
+}
+
+// ---------------------------------------------------------------------------
 // Computed style -> css::Style
 // ---------------------------------------------------------------------------
 
@@ -2496,6 +2720,31 @@ unsafe fn length_px(
         return None;
     }
     Some(fixed_to_f64(css_unit_len2css_px(style, unit_ctx, len, unit)))
+}
+
+/// One `border-*-width` in CSS pixels: computed lengths convert like any
+/// other length; the `thin`/`medium`/`thick` keywords map to the 1/3/5px the
+/// CSS spec suggests.
+unsafe fn border_width_px(
+    style: *const CssComputedStyle,
+    unit_ctx: &CssUnitCtx,
+    get: LengthGetter,
+) -> f64 {
+    let mut len: CssFixed = 0;
+    let mut unit: CssUnit = 0;
+    match get(style, &mut len, &mut unit) {
+        CSS_BORDER_WIDTH_WIDTH => {
+            if unit == CSS_UNIT_PCT {
+                0.0
+            } else {
+                fixed_to_f64(css_unit_len2css_px(style, unit_ctx, len, unit)).max(0.0)
+            }
+        }
+        CSS_BORDER_WIDTH_THIN => 1.0,
+        CSS_BORDER_WIDTH_MEDIUM => 3.0,
+        CSS_BORDER_WIDTH_THICK => 5.0,
+        _ => 0.0,
+    }
 }
 
 /// The flex container properties of a computed style.
@@ -2663,6 +2912,56 @@ unsafe fn map_style(
     ];
     for (i, get) in paddings.into_iter().enumerate() {
         out.padding[i] = length_px(style, unit_ctx, get, CSS_PADDING_SET).unwrap_or(0.0);
+    }
+
+    // Borders (S10): libcss computes the cascade for width/style/colour, so
+    // shorthands, longhands, `currentColor` and CSS-wide keywords all follow
+    // its computed values — nothing is re-parsed here. `border-radius` has no
+    // computed getter in libcss 0.9.2; it is read from the author sheets by
+    // `apply_border_radius_styles` after the cascade.
+    let border_widths = [
+        css_computed_border_top_width,
+        css_computed_border_right_width,
+        css_computed_border_bottom_width,
+        css_computed_border_left_width,
+    ];
+    for (i, get) in border_widths.into_iter().enumerate() {
+        out.border_width[i] = border_width_px(style, unit_ctx, get);
+    }
+    let border_colors = [
+        css_computed_border_top_color,
+        css_computed_border_right_color,
+        css_computed_border_bottom_color,
+        css_computed_border_left_color,
+    ];
+    for (i, get) in border_colors.into_iter().enumerate() {
+        let mut color: CssColor = 0;
+        out.border_color[i] = match get(style, &mut color) {
+            CSS_BORDER_COLOR_COLOR => rgba(color),
+            CSS_BORDER_COLOR_CURRENT_COLOR => out.color,
+            // Anything else unresolved: the text colour.
+            _ => out.color,
+        };
+    }
+    let border_styles = [
+        css_computed_border_top_style,
+        css_computed_border_right_style,
+        css_computed_border_bottom_style,
+        css_computed_border_left_style,
+    ];
+    for (i, get) in border_styles.into_iter().enumerate() {
+        out.border_style[i] = match get(style) {
+            CSS_BORDER_STYLE_NONE | CSS_BORDER_STYLE_HIDDEN => BorderStyle::None,
+            // `dashed`/`dotted`/`double`/… degrade to solid (see BorderStyle).
+            _ => BorderStyle::Solid,
+        };
+    }
+    // A used width of zero where no border paints: like browsers, `none`
+    // takes no space even when libcss reports its medium initial width.
+    for i in 0..4 {
+        if out.border_style[i] == BorderStyle::None {
+            out.border_width[i] = 0.0;
+        }
     }
 
     let mut color: CssColor = 0;
@@ -3491,6 +3790,10 @@ fn compute_inner(
     // the same author sheets here, after the cascade above fixed display.
     let css_texts: Vec<&str> = sheets.iter().map(|input| input.css).collect();
     apply_grid_styles(doc, &css_texts, &mut out);
+
+    // `border-radius` is invisible to libcss too (no computed getter): the
+    // same manual cascade reads it from the same author sheets.
+    apply_border_radius_styles(doc, &css_texts, &mut out);
 
     // `@font-face` never reaches libcss (the rewriter strips it): the font
     // files are fetched and registered with fontconfig here, before layout
