@@ -1,6 +1,10 @@
 package css
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+	"unicode"
+)
 
 // The stylesheet rewriter, ported verbatim in behaviour from
 // src/css_libcss.rs. It runs over the raw stylesheet text before libcss
@@ -113,12 +117,21 @@ func rewriteRuleList(src string, out *strings.Builder, cap *capture) {
 		out.WriteString(prelude)
 		out.WriteByte('{')
 		if atRuleHoldsRules(prelude) {
-			if cap != nil {
-				cap.media = append(cap.media, atRuleCondition(prelude))
-			}
-			rewriteRuleList(body, out, cap)
-			if cap != nil {
-				cap.media = cap.media[:len(cap.media)-1]
+			if cap != nil && isLayerRule(prelude) {
+				// An @layer block contributes its name (the cascade
+				// layer the declarations belong to), never a media
+				// condition: the replay wrappers stay parseable.
+				cap.layer = append(cap.layer, layerBlockName(prelude, cap))
+				rewriteRuleList(body, out, cap)
+				cap.layer = cap.layer[:len(cap.layer)-1]
+			} else {
+				if cap != nil {
+					cap.media = append(cap.media, atRuleCondition(prelude))
+				}
+				rewriteRuleList(body, out, cap)
+				if cap != nil {
+					cap.media = cap.media[:len(cap.media)-1]
+				}
 			}
 		} else {
 			rewriteDeclarations(body, out, cap, strings.TrimSpace(prelude))
@@ -181,10 +194,37 @@ func rewriteDeclaration(decl string, out *strings.Builder, cap *capture, selecto
 				Value:     core,
 				Selector:  selector,
 				Media:     strings.Join(cap.media, " "),
+				MediaList: append([]string(nil), cap.media...),
+				Layer:     strings.Join(cap.layer, "."),
 				Important: important,
 				Order:     uint32(len(cap.decls)),
 			})
 			return
+		}
+		if isBackgroundFamily(asciiLower(trimmed)) {
+			// The background family (S10): libcss 0.9.2 computes
+			// background-repeat and background-position but discards
+			// every value form the manual passes apply — var() (the
+			// branch above) and image functions like linear-gradient(...)
+			// alike. A gradient-valued declaration is captured and
+			// removed exactly like a var() one; a plain one stays in
+			// the text for libcss to compute (or discard) and only its
+			// cascade bid is recorded (Kept).
+			gradient := strings.Contains(asciiLower(core), "linear-gradient(")
+			cap.decls = append(cap.decls, CustomDecl{
+				Property:  asciiLower(trimmed),
+				Value:     core,
+				Selector:  selector,
+				Media:     strings.Join(cap.media, " "),
+				MediaList: append([]string(nil), cap.media...),
+				Layer:     strings.Join(cap.layer, "."),
+				Important: important,
+				Order:     uint32(len(cap.decls)),
+				Kept:      !gradient,
+			})
+			if gradient {
+				return
+			}
 		}
 	}
 	name := asciiLower(trimmed)
@@ -284,6 +324,49 @@ func SplitImportant(value string) (core string, important bool) {
 		return strings.TrimSpace(trimmed[:len(trimmed)-10]), true
 	}
 	return trimmed, false
+}
+
+// isLayerRule reports whether the prelude opens an @layer block.
+func isLayerRule(prelude string) bool {
+	trimmed := strings.TrimLeftFunc(prelude, unicode.IsSpace)
+	rest, found := strings.CutPrefix(trimmed, "@")
+	if !found {
+		return false
+	}
+	return asciiEqualFold(takeAtRuleName(rest), "layer")
+}
+
+// layerBlockName names one @layer block for the capture stack: the layer
+// path the block contributes. An anonymous "@layer {" gets a unique "#N"
+// name (CSS Cascade 5 §6.3: consecutive anonymous layers are distinct);
+// a "@layer a.b {" path is kept as written (the dotted name is the layer
+// a.b). Comment trivia inside the prelude is stripped before use.
+func layerBlockName(prelude string, cap *capture) string {
+	trimmed := strings.TrimLeftFunc(prelude, unicode.IsSpace)
+	rest := trimmed[1:] // drop '@'
+	name := takeAtRuleName(rest)
+	rest = strings.TrimSpace(stripAtRuleComments(rest[len(name):]))
+	if rest == "" {
+		cap.anonLayers++
+		return "#" + strconv.Itoa(cap.anonLayers)
+	}
+	return rest
+}
+
+// stripAtRuleComments removes /*...*/ runs from a prelude tail.
+func stripAtRuleComments(text string) string {
+	bytes := []byte(text)
+	var out strings.Builder
+	i := 0
+	for i < len(bytes) {
+		if bytes[i] == '/' && i+1 < len(bytes) && bytes[i+1] == '*' {
+			i = skipComment(bytes, i)
+			continue
+		}
+		out.WriteByte(bytes[i])
+		i++
+	}
+	return out.String()
 }
 
 // skipString returns the index just after the string that starts at i

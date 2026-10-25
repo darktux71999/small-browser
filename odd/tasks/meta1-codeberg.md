@@ -484,3 +484,34 @@ sería bug de anchura de caja y se corrige ahí.
   la ventana de integración la abre el padre). Restos documentados: nowrap solo
   en raíces de contexto de formato (sin fragmentación inline); `@container` sin
   evaluar (correcto a 1000px por ahora).
+- **L24** (2026-10-25): **Pintado S10 + capas de cascada ARREGLADOS** (P10b
+  retry, ling-3.1-flash — el primer intento murió por cuota del proveedor; el
+  retry evaluó sus restos como coherentes y los completó, corrigiendo solo 3
+  pines con coordenadas erróneas). Tres raíces: (1) **héroe**: libcss 0.9.2 ya
+  computa `background-repeat`/`background-position` — el mapping nunca los leía
+  y el pintado siempre tileaba desde el origen (la imagen de montaña DOBLE que
+  el usuario vio); ahora `no-repeat|repeat` + palabras clave de posición con
+  clips de banda y `EXTEND_NONE` para no-repeat → **blanco arriba, UNA instancia
+  anclada al fondo** (sonda arriba 40/40 blanca; abajo (138,193,190) montaña);
+  (2) **cards `linear-gradient`**: dos bugs — `SplitCommaList` dejaba whitespace
+  en las partes (todo gradiente estándar parseaba nil) + los backgrounds
+  capturados se eliminaban del texto de libcss y **nunca se aplicaban** (nueva
+  cascada doble `applyBackgroundStyles`: bid capturado vs plano, misma gating de
+  media, gate a documentos con ≥1 captura — corpus byte-idéntico); más un
+  guard en `parseSheet` para el `CSS_BADPARM` de libcss con hoja vacía
+  (stylesheet.c:157). Rampa verificada (24,93,113)→(20,76,74) ≈ FF (21,76,75);
+  (3) **nav `--color-nav-bg`**: `@layer` implementado en la cascada var()
+  (rank por primera aparición, ordenado entre important e inline — Cascading 5
+  §6.4.2; unlayered gana a layered normal; `!important` invierte) → **nav
+  `#2185D0` exacto en sondas**. Verificación AE con rigor notable: la pre-fix
+  reproducía el 9.80976% registrado (prueba de la convención), y el 9.99%
+  actual está **enteramente atribuido**: la referencia FF congelada lleva un
+  banner ToU JS-driven de ~100px que nuestro motor sin-JS oculta correctamente
+  (+12397 AE región nav, color byte-idéntico) + geometría de card preexistente
+  fuera de alcance (`top:-7em` y `max-width:950px` perdido por el rewriter —
+  apuntado como frente); el héroe mejoró **−11715 AE**. 87+69 subtests en
+  paint/css, módulo verde, differential en el estado registrado (70 DIFF +
+  net-latin1). Aproximaciones documentadas en KNOWN_DIFFS (S10): posiciones de
+  stop de gradiente descartadas, gradientes no verticales/≠2 stops inertes,
+  bids de grid/radius sin layer rank. `Risk: none` (todo pinneado; aceptación
+  visual confirmada por el padre con sondas independientes).

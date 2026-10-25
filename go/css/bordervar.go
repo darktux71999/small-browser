@@ -122,12 +122,17 @@ func borderVarScope(property string) (widths, styles, colors [4]bool, ok bool) {
 }
 
 // borderVarWeaker orders two bids by ascending cascade priority: exactly
-// the tuple cascadeBid.winsOver compares, reversed. Equal tuples are
-// weaker in neither direction, so a stable sort keeps their capture order
-// (the last declaration of a style="" list wins, like the sheet cascade).
+// the tuple cascadeBid.winsOver compares, reversed — important, then the
+// layer sort key (Cascade 5 §6.4.2, reversed with it), then inline,
+// specificity and order. Equal tuples are weaker in neither direction, so
+// a stable sort keeps their capture order (the last declaration of a
+// style="" list wins, like the sheet cascade).
 func borderVarWeaker(a, b cascadeBid) bool {
 	if a.important != b.important {
 		return !a.important
+	}
+	if ak, bk := a.layerKey(), b.layerKey(); ak != bk {
+		return ak < bk
 	}
 	if a.inline != b.inline {
 		return !a.inline
@@ -237,6 +242,7 @@ func collectBorderVarBids(doc NodeIndex, cp *CustomProperties) map[int][]borderV
 					important:   decl.Important,
 					specificity: specificity,
 					order:       decl.Order,
+					layerRank:   cp.layerRank(decl.Layer),
 				})
 			}
 		}
@@ -253,6 +259,7 @@ func collectBorderVarBids(doc NodeIndex, cp *CustomProperties) map[int][]borderV
 				important: decl.Important,
 				inline:    true,
 				order:     ^uint32(0), // u32::MAX
+				layerRank: cp.layerRank(decl.Layer),
 			})
 		}
 	}

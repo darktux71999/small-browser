@@ -13,6 +13,13 @@ func isUnicodeSpace(r rune) bool {
 	return unicode.IsSpace(r)
 }
 
+// The layer sort keys' extremes (math.MinInt/math.MaxInt without the math
+// import: the bid tuple compares them like any other int).
+const (
+	minInt = -int(^uint(0)>>1) - 1
+	maxInt = int(^uint(0) >> 1)
+)
+
 // The grid / border-radius passes, mirroring apply_grid_styles,
 // grid_declarations, apply_border_radius_styles, radius_declarations and
 // selector_specificity of css_libcss.rs plus the css.rs parsers they call
@@ -30,12 +37,41 @@ type cascadeBid struct {
 	inline      bool
 	specificity [3]uint32
 	order       uint32
+	// layerRank is the declaration's cascade layer: -1 unlayered, else
+	// the first-appearance rank of its layer name over the captured side
+	// table (CSS Cascade 5 §6.4.2 — layer order is the order the layers
+	// first appear in the document, not the order of their declarations).
+	// The grid/radius walkers predate layers and leave the zero value,
+	// which compares equal on every bid and falls through to the
+	// specificity/order steps unchanged.
+	layerRank int
 }
 
-// winsWhen mirrors the (important, inline, specificity, order) > compare.
+// layerKey is the cascade's layer sort key (CSS Cascade 5 §6.4.2/§6.4.3):
+// normal declarations honour unlayered over layered and later layers over
+// earlier ones; !important reverses both — layered beats unlayered and
+// earlier layers beat later ones.
+func (b cascadeBid) layerKey() int {
+	if b.important {
+		if b.layerRank < 0 {
+			return minInt
+		}
+		return -b.layerRank
+	}
+	if b.layerRank < 0 {
+		return maxInt
+	}
+	return b.layerRank
+}
+
+// winsWhen mirrors the (important, layer, inline, specificity, order) >
+// compare.
 func (b cascadeBid) winsOver(prev cascadeBid) bool {
 	if b.important != prev.important {
 		return b.important
+	}
+	if bk, pk := b.layerKey(), prev.layerKey(); bk != pk {
+		return bk > pk
 	}
 	if b.inline != prev.inline {
 		return b.inline

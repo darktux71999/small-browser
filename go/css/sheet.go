@@ -79,17 +79,21 @@ func parseSheet(cssText, sheetURL string, inline bool) (*C.css_stylesheet, error
 		return nil, err
 	}
 
-	var data *C.uint8_t
+	// An empty rewritten body is valid CSS: it happens when every
+	// declaration of an inline style="" list was captured (the var() and
+	// gradient declarations the manual passes replay), and libcss answers
+	// css_stylesheet_append_data with CSS_BADPARM for a NULL data pointer
+	// even at length zero — so the append is skipped and the sheet is
+	// finished empty.
 	if len(rewritten) > 0 {
-		data = (*C.uint8_t)(unsafe.Pointer(unsafe.StringData(rewritten)))
-	}
-	err := C.css_stylesheet_append_data(sheet, data, C.size_t(len(rewritten)))
-	if int32(err) != cssOK && int32(err) != cssNeedData {
-		return nil, errLibcss{what: "css_stylesheet_append_data", code: int32(err), text: cErrorString(err)}
+		data := (*C.uint8_t)(unsafe.Pointer(unsafe.StringData(rewritten)))
+		if err := C.css_stylesheet_append_data(sheet, data, C.size_t(len(rewritten))); err != cssOK && err != cssNeedData {
+			return nil, errLibcss{what: "css_stylesheet_append_data", code: int32(err), text: cErrorString(err)}
+		}
 	}
 	// css_stylesheet_data_done answers CSS_IMPORTS_PENDING when the sheet
 	// still waits for its imports (registered empty without a loader).
-	err = C.css_stylesheet_data_done(sheet)
+	err := C.css_stylesheet_data_done(sheet)
 	if int32(err) == cssImportsPending {
 		if err := finishImports(sheet); err != nil {
 			return nil, err

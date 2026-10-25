@@ -75,10 +75,16 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 		Color:           style.Color,
 		Background:      style.Background,
 		BackgroundImage: backgroundFor(style, st.images),
-		BorderWidth:     style.BorderWidth,
-		BorderStyle:     style.BorderStyle,
-		BorderColor:     style.BorderColor,
-		BorderRadius:    style.BorderRadius,
+		// The placement fields travel with the image (S10), like the
+		// block box in layout.go.
+		BackgroundRepeat:    style.BackgroundRepeat,
+		BackgroundPositionX: style.BackgroundPositionX,
+		BackgroundPositionY: style.BackgroundPositionY,
+		BackgroundGradient:  style.BackgroundGradient,
+		BorderWidth:         style.BorderWidth,
+		BorderStyle:         style.BorderStyle,
+		BorderColor:         style.BorderColor,
+		BorderRadius:        style.BorderRadius,
 	})
 
 	items := collectGridItems(doc, styles, id)

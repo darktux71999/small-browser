@@ -36,6 +36,16 @@ type LayoutBox struct {
 	// BackgroundImage holds the decoded background-image pixels, nil when
 	// the element has no usable background image.
 	BackgroundImage *img.Image
+	// BackgroundRepeat/PositionX/PositionY place the background image in
+	// the box (meta1 S10): the zero values (repeat, 0%, 0%) tile from the
+	// box origin exactly like the pre-placement engine.
+	BackgroundRepeat    css.BackgroundRepeat
+	BackgroundPositionX css.BackgroundPosition
+	BackgroundPositionY css.BackgroundPosition
+	// BackgroundGradient paints a vertical two-stop ramp over the
+	// background colour when the winning background image is a
+	// linear-gradient the manual cascade recognised (nil when none).
+	BackgroundGradient *css.LinearGradient
 	// FontSize in CSS pixels; Bold mirrors FontWeight >= 600; Centered
 	// mirrors text-align center.
 	FontSize float64
@@ -365,10 +375,17 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 		Color:           style.Color,
 		Background:      style.Background,
 		BackgroundImage: backgroundFor(style, st.images),
-		BorderWidth:     style.BorderWidth,
-		BorderStyle:     style.BorderStyle,
-		BorderColor:     style.BorderColor,
-		BorderRadius:    style.BorderRadius,
+		// The placement fields travel with the image (S10): the zero
+		// values tile from the box origin exactly like the pre-placement
+		// engine, so boxes without a placement cascade are unchanged.
+		BackgroundRepeat:    style.BackgroundRepeat,
+		BackgroundPositionX: style.BackgroundPositionX,
+		BackgroundPositionY: style.BackgroundPositionY,
+		BackgroundGradient:  style.BackgroundGradient,
+		BorderWidth:         style.BorderWidth,
+		BorderStyle:         style.BorderStyle,
+		BorderColor:         style.BorderColor,
+		BorderRadius:        style.BorderRadius,
 	})
 
 	// place resolves one participant's margin-adjoining origin: the pending
@@ -543,11 +560,17 @@ func (st *state) layoutImage(doc *dom.Document, styles []css.Style, id dom.NodeI
 		Color:           style.Color,
 		Background:      style.Background,
 		BackgroundImage: backgroundFor(style, st.images),
-		Image:           image,
-		BorderWidth:     style.BorderWidth,
-		BorderStyle:     style.BorderStyle,
-		BorderColor:     style.BorderColor,
-		BorderRadius:    style.BorderRadius,
+		// The placement fields travel with the image (S10), like the
+		// block box above.
+		BackgroundRepeat:    style.BackgroundRepeat,
+		BackgroundPositionX: style.BackgroundPositionX,
+		BackgroundPositionY: style.BackgroundPositionY,
+		BackgroundGradient:  style.BackgroundGradient,
+		Image:               image,
+		BorderWidth:         style.BorderWidth,
+		BorderStyle:         style.BorderStyle,
+		BorderColor:         style.BorderColor,
+		BorderRadius:        style.BorderRadius,
 	})
 	return h + style.Margin[0] + style.Margin[2]
 }

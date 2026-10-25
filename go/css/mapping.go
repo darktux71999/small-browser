@@ -134,6 +134,20 @@ func lengthPx(style *C.css_computed_style, unitCtx *C.css_unit_ctx, get lengthGe
 	return fixedToF64(C.css_unit_len2css_px(style, unitCtx, length, C.css_unit(unit))), true
 }
 
+// backgroundPosition maps one computed background-position axis (CSS 2.1
+// §8.14.1): a percentage unit keeps the percentage number — the form the
+// left/center/right and top/center/bottom keywords compute to — and an
+// absolute length converts to CSS pixels.
+func backgroundPosition(length C.css_fixed, unit C.css_unit,
+	style *C.css_computed_style, unitCtx *C.css_unit_ctx) BackgroundPosition {
+	if uint32(unit) == cssUnitPct {
+		return BackgroundPosition{Percent: true, Value: fixedToF64(length)}
+	}
+	return BackgroundPosition{
+		Value: fixedToF64(C.css_unit_len2css_px(style, unitCtx, length, unit)),
+	}
+}
+
 // borderWidthPx returns one border-*-width in CSS pixels: computed lengths
 // convert like any other length; the thin/medium/thick keywords map to the
 // 1/3/5px the CSS spec suggests.
@@ -492,6 +506,31 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 		backgroundURL != nil {
 		out.BackgroundImage = lwcBytes(backgroundURL)
 		out.HasBackgroundImage = true
+	}
+
+	// The tiling and placement libcss computes natively (CSS 2.1
+	// §8.14.1): background-repeat as its computed keyword, and
+	// background-position as two lengths whose unit says whether the
+	// value is a percentage — where the left/center/right and
+	// top/center/bottom keywords land (0/50/100%, libcss'
+	// select/properties/background_position.c) — or an absolute length.
+	// The S10 painter reads both through Style to place the image inside
+	// the box instead of tiling it from the top-left corner.
+	switch uint8(C.css_computed_background_repeat(style)) {
+	case cssBackgroundRepeatRepeatX:
+		out.BackgroundRepeat = BackgroundRepeatRepeatX
+	case cssBackgroundRepeatRepeatY:
+		out.BackgroundRepeat = BackgroundRepeatRepeatY
+	case cssBackgroundRepeatNoRepeat:
+		out.BackgroundRepeat = BackgroundRepeatNoRepeat
+	default:
+		out.BackgroundRepeat = BackgroundRepeatRepeat
+	}
+	var hlen, vlen C.css_fixed
+	var hun, vun C.css_unit
+	if uint8(C.css_computed_background_position(style, &hlen, &hun, &vlen, &vun)) == cssBackgroundPositionSet {
+		out.BackgroundPositionX = backgroundPosition(hlen, hun, style, unitCtx)
+		out.BackgroundPositionY = backgroundPosition(vlen, vun, style, unitCtx)
 	}
 
 	// The full computed family list (T10): libcss hands back a NULL

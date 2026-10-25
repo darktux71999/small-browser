@@ -75,7 +75,8 @@ func TestCaptureSheetExtractsSideTable(t *testing.T) {
 			"@media (min-width: 500px) { a {} }",
 			[]CustomDecl{{
 				Property: "border", Value: "1px solid var(--c)",
-				Selector: "a", Media: "(min-width: 500px)", Order: 0,
+				Selector: "a", Media: "(min-width: 500px)",
+				MediaList: []string{"(min-width: 500px)"}, Order: 0,
 			}},
 		},
 		{

@@ -33,14 +33,35 @@ type CustomDecl struct {
 	// at-rules (" "-joined, "" at the top level). Phase 1 records it
 	// but does NOT evaluate it: a declaration behind a media condition
 	// that would not match the viewport is still captured, and phase 2
-	// decides whether to honour the condition before applying it.
+	// decides whether to honour the condition before applying it. An
+	// @layer block contributes nothing here: its prelude is a layer
+	// name, not a media condition; the declaration's layer travels in
+	// Layer.
 	Media string
+	// MediaList is the same condition stack as Media, one entry per
+	// enclosing rule-holding at-rule (innermost last). The background
+	// pass evaluates the conditions as a conjunction — a declaration
+	// behind two nested @media blocks applies only when both match —
+	// which the joined string cannot express.
+	MediaList []string
+	// Layer is the innermost @layer block holding the declaration:
+	// nested layers join with "." and an anonymous "@layer {" block
+	// gets a unique "#N" name. "" marks the unlayered origin — the
+	// common case, and the one every pre-layer fixture uses.
+	Layer string
 	// Important reports the declaration's !important flag.
 	Important bool
 	// Order numbers the captured declaration within its capture run:
 	// 0-based, in document order. NewCustomProperties re-stamps the
 	// sheets it captures into one document-wide sequence.
 	Order uint32
+	// Kept reports whether the declaration's text stayed in the
+	// rewritten sheet for libcss. False — the custom-property and var()
+	// captures, and the gradient-valued background declarations the S10
+	// pass removes — means libcss never sees it; true means the text
+	// stays (libcss computes or discards it itself) and only the
+	// declaration's cascade bid is recorded for the manual pass.
+	Kept bool
 }
 
 // capture is the side-table collector threaded through the rewriter: the
@@ -48,8 +69,14 @@ type CustomDecl struct {
 // itself is byte-identical to the gap-only walk either way.
 type capture struct {
 	decls []CustomDecl
-	// media is the stack of enclosing rule-holding at-rule conditions.
+	// media is the stack of enclosing rule-holding at-rule conditions
+	// (@layer blocks stay out of it: they hold a name, not a condition).
 	media []string
+	// layer is the stack of enclosing @layer block names; the innermost
+	// path (joined with ".") is the declaration's Layer.
+	layer []string
+	// anonLayers numbers anonymous "@layer {" blocks uniquely.
+	anonLayers int
 }
 
 // CaptureSheet rewrites a rule list for libcss and returns the side
@@ -214,6 +241,11 @@ type CustomProperties struct {
 	own map[int]map[string]string
 	// maps memoises the effective, fully resolved map per element.
 	maps map[int]map[string]string
+	// ranks numbers the cascade layers by first appearance over the
+	// captured declarations (CSS Cascade 5 §6.4.2: layer order is the
+	// order the layer names first appear in the document). Only named
+	// layers are keyed; "" (the unlayered origin) ranks -1 at the bid.
+	ranks map[string]int
 	// decls is the captured side table of the sheets this resolver was
 	// built from, sheets in document order, Order re-stamped into one
 	// document-wide sequence. Inline style="" declarations are NOT part
@@ -248,6 +280,27 @@ func NewCustomProperties(doc NodeIndex, sheets []string) *CustomProperties {
 	}
 	cp.decls = all
 
+	// The layer order: the first appearance of each layer name over the
+	// captured declarations (CSS Cascade 5 §6.4.2). Re-opened layers
+	// keep their first rank, so a later declaration in an earlier layer
+	// still loses to any declaration of a later layer.
+	ranks := map[string]int{}
+	for _, decl := range all {
+		if decl.Layer == "" {
+			continue
+		}
+		if _, ok := ranks[decl.Layer]; !ok {
+			ranks[decl.Layer] = len(ranks)
+		}
+	}
+	cp.ranks = ranks
+	rankOf := func(layer string) int {
+		if rank, ok := ranks[layer]; ok {
+			return rank
+		}
+		return -1 // the unlayered origin
+	}
+
 	type customBid struct {
 		value string
 		bid   cascadeBid
@@ -280,6 +333,7 @@ func NewCustomProperties(doc NodeIndex, sheets []string) *CustomProperties {
 					important:   decl.Important,
 					specificity: specificity,
 					order:       decl.Order,
+					layerRank:   rankOf(decl.Layer),
 				})
 			}
 		}
@@ -301,6 +355,7 @@ func NewCustomProperties(doc NodeIndex, sheets []string) *CustomProperties {
 				important: decl.Important,
 				inline:    true,
 				order:     ^uint32(0), // u32::MAX
+				layerRank: rankOf(decl.Layer),
 			})
 		}
 	}
@@ -321,6 +376,16 @@ func NewCustomProperties(doc NodeIndex, sheets []string) *CustomProperties {
 // Read-only; T2 feeds the non-custom entries to its manual cascade.
 func (cp *CustomProperties) Declarations() []CustomDecl {
 	return cp.decls
+}
+
+// layerRank answers a declaration's cascade-layer rank: the
+// first-appearance order of its layer name over the captured side table
+// (CSS Cascade 5 §6.4.2), or -1 for the unlayered origin.
+func (cp *CustomProperties) layerRank(layer string) int {
+	if rank, ok := cp.ranks[layer]; ok {
+		return rank
+	}
+	return -1
 }
 
 // EffectiveMap returns the effective --* map of an element: the

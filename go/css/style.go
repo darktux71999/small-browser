@@ -196,6 +196,38 @@ type Color struct {
 	R, G, B, A float64
 }
 
+// BackgroundRepeat is the computed tiling mode of background-image
+// (CSS 2.1 §8.14.1). The zero value is the initial repeat: boxes built
+// without a cascade (the painter's fixtures, anonymous boxes) tile exactly
+// like they did before the placement fields existed.
+type BackgroundRepeat uint8
+
+// The four modes libcss computes.
+const (
+	BackgroundRepeatRepeat BackgroundRepeat = iota
+	BackgroundRepeatRepeatX
+	BackgroundRepeatRepeatY
+	BackgroundRepeatNoRepeat
+)
+
+// BackgroundPosition is one axis of the computed background-position:
+// a percentage of the free space (Percent true — where the keyword
+// left/center/right and top/center/bottom land as 0/50/100), or a CSS
+// pixel offset from the box's top-left corner (CSS 2.1 §8.14.1).
+type BackgroundPosition struct {
+	Percent bool
+	Value   float64
+}
+
+// LinearGradient is a two-stop vertical gradient: From paints at the box's
+// top edge, To at its bottom edge, alpha included (the CSS Images 3 §3.4
+// subset the engine paints; other shapes keep the engine's behavior for
+// backgrounds without an image).
+type LinearGradient struct {
+	From Color
+	To   Color
+}
+
 // BorderKind is the computed per-side border marker: today the engine
 // paints only the solid case; every other CSS style degrades to solid.
 // (The Style field keeps the Rust field name border_style, so the enum
@@ -257,6 +289,22 @@ type Style struct {
 	// declares none (or the declaration is absent).
 	HasBackgroundImage bool
 	BackgroundImage    string
+	// BackgroundRepeat: the computed tiling mode of the background image
+	// (CSS 2.1 §8.14.1; the zero value is the initial repeat).
+	BackgroundRepeat BackgroundRepeat
+	// BackgroundPositionX/Y: the computed background-position per axis
+	// (CSS Backgrounds 3 §4.4). Percent positions the value's point of
+	// the image against the same point of the box's free space (the
+	// keyword center/top/bottom/left/right land as 50/0/100/0/100%);
+	// a plain length offsets the image from the box's top-left corner
+	// (the CSS 2.1 §8.14.1 semantics).
+	BackgroundPositionX BackgroundPosition
+	BackgroundPositionY BackgroundPosition
+	// BackgroundGradient: the winning background image when it is a
+	// two-stop vertical linear-gradient, read from the author sheets by
+	// the manual cascade (libcss 0.9.2 knows no image functions at all,
+	// so these never reach a computed style). nil when none.
+	BackgroundGradient *LinearGradient
 	// FontSize in CSS pixels (16 by default).
 	FontSize float64
 	// FontFamily is the first family of FontFamilies, or the display name

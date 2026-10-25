@@ -101,3 +101,38 @@ offset — the fix direction). Live codeberg.org: LAYOUT 1000x2297→1000x1942
 365px→284px); whole-page AE 14.22%→9.81%, support-region AE 68474→24162.
 Reference: `odd/tasks/meta1-codeberg.md` (S7/L22). Orthogonal to the three
 categories above, which are unchanged.
+
+## Category: background placement, gradients and cascade layers (meta1 S10)
+
+The Go engine now (1) places background images from the computed
+background-repeat/background-position (libcss 0.9.2 computes both; the
+painter previously ignored them, so the codeberg hero tiled instead of
+painting one bottom-anchored instance), (2) paints the two-stop vertical
+linear-gradient subset that the rewriter captures out of libcss' reach (the
+codeberg about-card's vendor gradient chain; stop positions are dropped —
+the documented approximation of CSS Images 3 §3.4), and (3) orders the
+background family's manual-cascade bids by @layer first-appearance rank
+(CSS Cascade 5 §6.4.2: the layered codeberg-theme `#navbar` declaration
+beats forgejo-theme's, so the nav paints #2185D0). The frozen Rust oracle
+shares all three gaps (it tiles alike, paints no gradients, knows no
+layers), so **by design** pages using these features diverge from it; the
+spec pins live in `go/css` background_test.go/layer_test.go and the
+`go/paint` background pins. The manual pass is gated on documents holding a
+captured (removed) background declaration, and an inline style="" whose
+every declaration was captured now finishes as an empty libcss sheet
+instead of failing `css_stylesheet_append_data`. Corpus blast radius: none
+— no fixture uses background-position/no-repeat/gradients/@layer/var()
+backgrounds (70 DIFF + `net-latin1` identical, unchanged). Live
+codeberg.org: hero top white with a single anchored mountain instance (was
+tiled), about-card teal ramp (bottom sample srgb(20,76,74); Firefox
+srgb(21,76,75)), navbar exactly srgb(33,133,208) (was white; Firefox's own
+nav is the same blue). LAYOUT stays 1000x1942. Whole-page AE vs the frozen
+/tmp/bl-m3 Firefox grid (re-derived 1000x1942 grid, `magick compare -fuzz
+25%`): 9.81%→9.99% — the +0.18pp is live-page drift, fully attributed:
+the reference's JS-driven ToU announcement banner (~100px, visible at its
+capture, hidden now) inflates the nav band (+12397 px; the engine's nav
+colour is identical to Firefox's own nav), the hero band improved (-11715
+px), and the card band carries the dropped-stop approximation plus the
+pre-existing unmodelled `top:-7em`/`max-width:950px` card geometry
+(+2892 px). Reference: `odd/tasks/meta1-codeberg.md` (S10/L22). Orthogonal
+to the categories above, which are unchanged.

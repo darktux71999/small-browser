@@ -67,6 +67,13 @@ const (
 
 	cssBackgroundImageInherit = uint8(0x0)
 
+	cssBackgroundPositionSet = uint8(0x1)
+
+	cssBackgroundRepeatRepeatX  = uint8(0x1)
+	cssBackgroundRepeatRepeatY  = uint8(0x2)
+	cssBackgroundRepeatRepeat   = uint8(0x3)
+	cssBackgroundRepeatNoRepeat = uint8(0x4)
+
 	cssFontFamilySerif     = uint8(0x1)
 	cssFontFamilySansSerif = uint8(0x2)
 	cssFontFamilyCursive   = uint8(0x3)

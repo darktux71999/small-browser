@@ -180,18 +180,54 @@ static void paint_surface_destroy(cairo_surface_t *s) {
 	cairo_surface_destroy(s);
 }
 
-// The background-image tile (S10): the image repeats at its natural size
-// from the box's top-left corner, clipped to the box, over the background
-// colour. Nearest keeps exact pixels, like the oracle's Filter::Nearest.
+// The background-image tile (S10): the image is placed at the box's origin
+// plus the background-position offsets (ox/oy, CSS Backgrounds 3 §3.4
+// position computation), clipped to the box, over the background colour.
+// mode 0/1/2 repeat along both axes / x only / y only (the repeat-x and
+// repeat-y bands stay inside the image's other extent, §4.2); mode 3 is
+// no-repeat, one anchored instance (§4.1). Nearest keeps exact pixels, like
+// the oracle's Filter::Nearest.
 static void paint_bg_image(paint_t *p, cairo_surface_t *img,
-		double x, double y, double w, double h) {
-	cairo_pattern_t *pat = cairo_pattern_create_for_surface(img);
-	cairo_pattern_set_filter(pat, CAIRO_FILTER_NEAREST);
-	cairo_pattern_set_extend(pat, CAIRO_EXTEND_REPEAT);
+		double x, double y, double w, double h,
+		double ox, double oy, int mode) {
 	cairo_save(p->cr);
 	cairo_rectangle(p->cr, x, y, w, h);
 	cairo_clip(p->cr);
-	cairo_translate(p->cr, x, y);
+	if (mode == 1) {
+		// repeat-x: paint only the image's vertical band.
+		cairo_rectangle(p->cr, x, y + oy, w, cairo_image_surface_get_height(img));
+		cairo_clip(p->cr);
+	} else if (mode == 2) {
+		// repeat-y: paint only the image's horizontal band.
+		cairo_rectangle(p->cr, x + ox, y, cairo_image_surface_get_width(img), h);
+		cairo_clip(p->cr);
+	}
+	cairo_translate(p->cr, x + ox, y + oy);
+	cairo_pattern_t *pat = cairo_pattern_create_for_surface(img);
+	cairo_pattern_set_filter(pat, CAIRO_FILTER_NEAREST);
+	cairo_pattern_set_extend(pat, mode == 3 ? CAIRO_EXTEND_NONE : CAIRO_EXTEND_REPEAT);
+	cairo_set_source(p->cr, pat);
+	cairo_paint(p->cr);
+	cairo_pattern_destroy(pat);
+	cairo_restore(p->cr);
+}
+
+// The two-stop vertical linear-gradient (S10, CSS Images 3 §3.3): a linear
+// pattern from the box's top to its bottom with the two stop colours,
+// painted over the background colour and clipped to the box like the image
+// tile. Only the vertical subset (to bottom / legacy top) reaches this
+// helper; the stop positions are dropped (documented approximation of
+// §3.4 colour-stop positions).
+static void paint_background_gradient(paint_t *p,
+		double x, double y, double w, double h,
+		double r0, double g0, double b0, double a0,
+		double r1, double g1, double b1, double a1) {
+	cairo_pattern_t *pat = cairo_pattern_create_linear(x, y, x, y + h);
+	cairo_pattern_add_color_stop_rgba(pat, 0.0, r0, g0, b0, a0);
+	cairo_pattern_add_color_stop_rgba(pat, 1.0, r1, g1, b1, a1);
+	cairo_save(p->cr);
+	cairo_rectangle(p->cr, x, y, w, h);
+	cairo_clip(p->cr);
 	cairo_set_source(p->cr, pat);
 	cairo_paint(p->cr);
 	cairo_restore(p->cr);
@@ -415,7 +451,9 @@ func paintBox(p *C.paint_t, b *layout.LayoutBox) {
 		C.paint_fill_rect(p, C.double(c.R), C.double(c.G), C.double(c.B), C.double(c.A),
 			C.double(b.X), C.double(b.Y), C.double(b.W), C.double(b.H))
 	}
-	if b.BackgroundImage != nil {
+	if b.BackgroundGradient != nil {
+		drawBackgroundGradient(p, b)
+	} else if b.BackgroundImage != nil {
 		drawBackgroundImage(p, b)
 	}
 	if borderVisible(b) {
@@ -498,19 +536,60 @@ func drawOutsetRing(p *C.paint_t, b *layout.LayoutBox) {
 	}
 }
 
-// drawBackgroundImage tiles the box's background image at its natural size
-// from the box's top-left corner, clipped to the box.
+// drawBackgroundImage places the box's background image per the computed
+// repeat and position (CSS Backgrounds 3 §4.4): a percentage position
+// aligns the image's p% point with the box's p% point of the free space —
+// offset = p/100 * (box - image) — and a plain length offsets the image
+// from the box's top-left corner (CSS 2.1 §8.14.1). The zero values
+// (repeat, 0%, 0%) tile from the box origin exactly like the
+// pre-placement engine.
 func drawBackgroundImage(p *C.paint_t, b *layout.LayoutBox) {
 	image := b.BackgroundImage
 	if b.W <= 0 || b.H <= 0 || image.Width == 0 || image.Height == 0 {
 		return
+	}
+	iw, ih := float64(image.Width), float64(image.Height)
+	ox := backgroundOffset(b.BackgroundPositionX, b.W, iw)
+	oy := backgroundOffset(b.BackgroundPositionY, b.H, ih)
+	mode := 0
+	switch b.BackgroundRepeat {
+	case css.BackgroundRepeatRepeatX:
+		mode = 1
+	case css.BackgroundRepeatRepeatY:
+		mode = 2
+	case css.BackgroundRepeatNoRepeat:
+		mode = 3
 	}
 	s := rgbaSurface(image.RGBA, int(image.Width), int(image.Height))
 	if s == nil {
 		return
 	}
 	defer C.paint_surface_destroy(s)
-	C.paint_bg_image(p, s, C.double(b.X), C.double(b.Y), C.double(b.W), C.double(b.H))
+	C.paint_bg_image(p, s, C.double(b.X), C.double(b.Y), C.double(b.W), C.double(b.H),
+		C.double(ox), C.double(oy), C.int(mode))
+}
+
+// backgroundOffset is one axis of the computed placement: a percentage of
+// the free space (box - image), or a plain length.
+func backgroundOffset(pos css.BackgroundPosition, box, image float64) float64 {
+	if pos.Percent {
+		return pos.Value / 100 * (box - image)
+	}
+	return pos.Value
+}
+
+// drawBackgroundGradient paints the two-stop vertical ramp over the
+// background colour: the image slot the manual cascade filled with a
+// linear-gradient libcss discarded (the codeberg cards' teal ramp).
+func drawBackgroundGradient(p *C.paint_t, b *layout.LayoutBox) {
+	g := b.BackgroundGradient
+	if g == nil || b.W <= 0 || b.H <= 0 {
+		return
+	}
+	C.paint_background_gradient(p,
+		C.double(b.X), C.double(b.Y), C.double(b.W), C.double(b.H),
+		C.double(g.From.R), C.double(g.From.G), C.double(g.From.B), C.double(g.From.A),
+		C.double(g.To.R), C.double(g.To.G), C.double(g.To.B), C.double(g.To.A))
 }
 
 // drawImage paints one <img> box's decoded pixels, scaled into the box.

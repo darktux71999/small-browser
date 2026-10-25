@@ -319,6 +319,13 @@ func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style
 	// same manual cascade reads it from the same author sheets.
 	applyBorderRadiusStyles(doc, cssTexts, out)
 
+	// The background family's manual cascade (S10): the gradient, var()
+	// and cascade-layer declarations libcss 0.9.2 discards, read from the
+	// same author sheets. The viewport gates the captured @media
+	// conditions. Documents without captured background declarations are
+	// untouched (see applyBackgroundStyles).
+	applyBackgroundStyles(doc, cssTexts, viewportWidth, out)
+
 	// @font-face never reaches libcss (the rewriter strips it): the font
 	// files are fetched and registered with fontconfig later (T10's loader
 	// wave). The no-loader path fetches nothing -- its contract says so --
