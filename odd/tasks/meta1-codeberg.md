@@ -526,3 +526,17 @@ sería bug de anchura de caja y se corrige ahí.
   `rem/em radius` — la cobertura reportada por el worker era optimista
   (mapeaba radius-rem-em a line-height/painting). Se extienden en la integración
   de P11.
+- **L26** (2026-10-25): **M4 — primera medición con el rig fijado en `tools/`**
+  (P12, muse-spark): `tools/fidelity-bands.py` codifica el método L20 con la
+  corrección fuzz-0% (L22) y el escaneo de fase (L21) — ya no muere con los
+  wipes de tmpfs (L25: los rigs bl-m1/bl-m2 fueron destruidos dos veces).
+  **Resultado M4** (motor 1000×1942 = sin drift vs L23; referencia 988×1669
+  exacta): AE página **9.47%** (era 9.81-9.99 — mejora real) · **bandas 3-10:
+  7/8 < 20%** (solo la 7 en 21.45%) — la mejor marca de la historia (P6 3/8 →
+  P8 2/8 → M3 4/8 → **M4 7/8**) · **fase rígida d≈155-181 → d=14** (el desfase
+  de texto quedó borrado tras P10a/P10b). El cluster 6-9 de M3 está resuelto;
+  las bandas problemáticas ahora: 1 (49.24% — la región del banner ToU: la
+  referencia congelada lleva el banner JS que nuestro motor sin-JS oculta
+  correctamente, atribución L24), 0 (25.27%) y 7 (21.45%). Caveat de
+  re-binning aplicado (G 2297→1942: los índices no son 1:1; los robustos son
+  AE total y fase). **S7: a una banda del objetivo histórico.**
