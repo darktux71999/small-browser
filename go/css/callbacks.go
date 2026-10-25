@@ -506,6 +506,7 @@ func cssgo_resolve(pw unsafe.Pointer, base *C.char, rel *C.lwc_string, abs **C.l
 		return cssOK
 	})
 }
+
 // (asciiEqualFold lives in rewriter.go.)
 
 // cssgoHintSetColor fills the css_hint union's color member from Go (the

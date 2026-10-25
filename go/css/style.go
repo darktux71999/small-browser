@@ -214,9 +214,9 @@ type Style struct {
 	// paints today); colours; corner radii as specified. A used width of
 	// zero is reported where the style is none: no border paints even
 	// when libcss reports the medium initial width.
-	BorderWidth [4]float64
-	BorderStyle [4]BorderKind
-	BorderColor [4]Color
+	BorderWidth  [4]float64
+	BorderStyle  [4]BorderKind
+	BorderColor  [4]Color
 	BorderRadius [4]Radius
 	// Color: the text colour.
 	Color Color

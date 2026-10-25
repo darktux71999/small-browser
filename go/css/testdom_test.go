@@ -213,10 +213,10 @@ func parseTag(inside string) (string, map[string]string) {
 
 // NodeIndex implementation.
 
-func (d *fakeDoc) Len() int { return len(d.nodes) }
-func (d *fakeDoc) Root() int { return 0 }
+func (d *fakeDoc) Len() int           { return len(d.nodes) }
+func (d *fakeDoc) Root() int          { return 0 }
 func (d *fakeDoc) IsText(id int) bool { return d.nodes[id].isText }
-func (d *fakeDoc) Tag(id int) string { return d.nodes[id].tag }
+func (d *fakeDoc) Tag(id int) string  { return d.nodes[id].tag }
 func (d *fakeDoc) Attr(id int, name string) (string, bool) {
 	v, ok := d.nodes[id].attrs[name]
 	return v, ok

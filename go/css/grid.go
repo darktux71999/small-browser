@@ -480,7 +480,8 @@ func splitTrackList(value string) []string {
 				depth--
 			}
 			current.WriteRune(ch)
-		case depth == 0 && isUnicodeSpace(ch):			if current.Len() > 0 {
+		case depth == 0 && isUnicodeSpace(ch):
+			if current.Len() > 0 {
 				tokens = append(tokens, current.String())
 				current.Reset()
 			}

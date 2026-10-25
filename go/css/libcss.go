@@ -31,29 +31,29 @@ const (
 	cssOriginUA     = 0
 	cssOriginAuthor = 2
 
-	cssMediaScreen             = uint32(1 << 6)
+	cssMediaScreen               = uint32(1 << 6)
 	cssMediaOrientationLandscape = uint32(1)
 
-	cssDisplayInline      = uint8(0x01)
-	cssDisplayBlock       = uint8(0x02)
-	cssDisplayListItem    = uint8(0x03)
-	cssDisplayRunIn       = uint8(0x04)
-	cssDisplayInlineBlock = uint8(0x05)
-	cssDisplayTable       = uint8(0x06)
-	cssDisplayInlineTable = uint8(0x07)
-	cssDisplayTableRowGroup = uint8(0x08)
+	cssDisplayInline           = uint8(0x01)
+	cssDisplayBlock            = uint8(0x02)
+	cssDisplayListItem         = uint8(0x03)
+	cssDisplayRunIn            = uint8(0x04)
+	cssDisplayInlineBlock      = uint8(0x05)
+	cssDisplayTable            = uint8(0x06)
+	cssDisplayInlineTable      = uint8(0x07)
+	cssDisplayTableRowGroup    = uint8(0x08)
 	cssDisplayTableHeaderGroup = uint8(0x09)
 	cssDisplayTableFooterGroup = uint8(0x0a)
-	cssDisplayTableRow        = uint8(0x0b)
+	cssDisplayTableRow         = uint8(0x0b)
 	cssDisplayTableColumnGroup = uint8(0x0c)
-	cssDisplayTableColumn     = uint8(0x0d)
-	cssDisplayTableCell       = uint8(0x0e)
-	cssDisplayTableCaption    = uint8(0x0f)
-	cssDisplayNone            = uint8(0x10)
-	cssDisplayFlex            = uint8(0x11)
-	cssDisplayInlineFlex      = uint8(0x12)
-	cssDisplayGrid            = uint8(0x13)
-	cssDisplayInlineGrid      = uint8(0x14)
+	cssDisplayTableColumn      = uint8(0x0d)
+	cssDisplayTableCell        = uint8(0x0e)
+	cssDisplayTableCaption     = uint8(0x0f)
+	cssDisplayNone             = uint8(0x10)
+	cssDisplayFlex             = uint8(0x11)
+	cssDisplayInlineFlex       = uint8(0x12)
+	cssDisplayGrid             = uint8(0x13)
+	cssDisplayInlineGrid       = uint8(0x14)
 
 	cssWidthSet   = uint8(0x01)
 	cssHeightSet  = uint8(0x01)
@@ -67,11 +67,11 @@ const (
 
 	cssBackgroundImageInherit = uint8(0x0)
 
-	cssFontFamilySerif      = uint8(0x1)
-	cssFontFamilySansSerif  = uint8(0x2)
-	cssFontFamilyCursive    = uint8(0x3)
-	cssFontFamilyFantasy    = uint8(0x4)
-	cssFontFamilyMonospace  = uint8(0x5)
+	cssFontFamilySerif     = uint8(0x1)
+	cssFontFamilySansSerif = uint8(0x2)
+	cssFontFamilyCursive   = uint8(0x3)
+	cssFontFamilyFantasy   = uint8(0x4)
+	cssFontFamilyMonospace = uint8(0x5)
 
 	cssFontSizeDimension = uint8(0x0a)
 
@@ -86,17 +86,17 @@ const (
 	cssFontWeight100     = uint8(0x5)
 	cssFontWeight900     = uint8(0xd)
 
-	cssLineHeightInherit    = uint8(0x0)
-	cssLineHeightNumber     = uint8(0x1)
-	cssLineHeightDimension  = uint8(0x2)
+	cssLineHeightInherit   = uint8(0x0)
+	cssLineHeightNumber    = uint8(0x1)
+	cssLineHeightDimension = uint8(0x2)
 
-	cssTextAlignLeft          = uint8(0x2)
-	cssTextAlignRight         = uint8(0x3)
-	cssTextAlignCenter        = uint8(0x4)
-	cssTextAlignJustify       = uint8(0x5)
-	cssTextAlignLibcssLeft    = uint8(0x7)
-	cssTextAlignLibcssCenter  = uint8(0x8)
-	cssTextAlignLibcssRight   = uint8(0x9)
+	cssTextAlignLeft         = uint8(0x2)
+	cssTextAlignRight        = uint8(0x3)
+	cssTextAlignCenter       = uint8(0x4)
+	cssTextAlignJustify      = uint8(0x5)
+	cssTextAlignLibcssLeft   = uint8(0x7)
+	cssTextAlignLibcssCenter = uint8(0x8)
+	cssTextAlignLibcssRight  = uint8(0x9)
 
 	cssLetterSpacingSet = uint8(0x1)
 
@@ -116,11 +116,11 @@ const (
 	cssBorderStyleNone   = uint8(0x1)
 	cssBorderStyleHidden = uint8(0x2)
 
-	cssAlignItemsStretch    = uint8(0x1)
-	cssAlignItemsFlexStart  = uint8(0x2)
-	cssAlignItemsFlexEnd    = uint8(0x3)
-	cssAlignItemsCenter     = uint8(0x4)
-	cssAlignItemsBaseline   = uint8(0x5)
+	cssAlignItemsStretch   = uint8(0x1)
+	cssAlignItemsFlexStart = uint8(0x2)
+	cssAlignItemsFlexEnd   = uint8(0x3)
+	cssAlignItemsCenter    = uint8(0x4)
+	cssAlignItemsBaseline  = uint8(0x5)
 
 	cssFlexBasisSet     = uint8(0x1)
 	cssFlexBasisAuto    = uint8(0x2)
@@ -134,9 +134,9 @@ const (
 	cssFlexGrowSet   = uint8(0x1)
 	cssFlexShrinkSet = uint8(0x1)
 
-	cssFlexWrapNoWrap         = uint8(0x1)
-	cssFlexWrapWrap           = uint8(0x2)
-	cssFlexWrapWrapReverse    = uint8(0x3)
+	cssFlexWrapNoWrap      = uint8(0x1)
+	cssFlexWrapWrap        = uint8(0x2)
+	cssFlexWrapWrapReverse = uint8(0x3)
 
 	cssJustifyContentFlexStart    = uint8(0x1)
 	cssJustifyContentFlexEnd      = uint8(0x2)
@@ -147,18 +147,18 @@ const (
 
 	cssUnitPct = uint32(0x15)
 
-	cssPropColor        = uint32(0x018)
-	cssPropFontFamily   = uint32(0x024)
-	cssPropQuotes       = uint32(0x04a)
-	cssPropVoiceFamily  = uint32(0x05c)
+	cssPropColor       = uint32(0x018)
+	cssPropFontFamily  = uint32(0x024)
+	cssPropQuotes      = uint32(0x04a)
+	cssPropVoiceFamily = uint32(0x05c)
 
-	cssQuotesNone       = uint8(0x1)
+	cssQuotesNone = uint8(0x1)
 
 	cssNodeDeleted = uint32(0)
 
 	cssFixedScale = 1024.0
 
-	defaultFontSize      = 16.0
+	defaultFontSize       = 16.0
 	defaultViewportHeight = 600.0
 )
 

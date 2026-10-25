@@ -58,13 +58,17 @@ func finishImports(parent *C.css_stylesheet) error {
 
 // parseSheet parses one stylesheet body: the rewriter runs over the raw
 // text first (the carriers; inline style declares a declaration list, the
-// others rule lists), then libcss gets the whole body in one append call.
+// others rule lists), extracting the custom-property/var() side table
+// libcss 0.9.2 would silently discard (see CaptureSheet), then libcss
+// gets the remaining body in one append call. The capture is a pure
+// function of the text: NewCustomProperties re-captures the same input
+// for the resolver, so both sides always see the same side table.
 func parseSheet(cssText, sheetURL string, inline bool) (*C.css_stylesheet, error) {
-	rewritten := cssText
+	var rewritten string
 	if inline {
-		rewritten = RewriteGapDeclarations(cssText)
+		rewritten, _ = CaptureInline(cssText)
 	} else {
-		rewritten = RewriteGapCarriers(cssText)
+		rewritten, _ = CaptureSheet(cssText)
 	}
 	cURL, free := cString(sheetURL)
 	defer free()

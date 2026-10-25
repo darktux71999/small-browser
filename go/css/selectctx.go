@@ -7,8 +7,8 @@ package css
 import "C"
 
 import (
-	"sync"
 	"strings"
+	"sync"
 	"unsafe"
 )
 

@@ -26,7 +26,7 @@ import "strings"
 func RewriteGapCarriers(css string) string {
 	var out strings.Builder
 	out.Grow(len(css))
-	rewriteRuleList(css, &out)
+	rewriteRuleList(css, &out, nil)
 	return out.String()
 }
 
@@ -35,13 +35,16 @@ func RewriteGapCarriers(css string) string {
 func RewriteGapDeclarations(css string) string {
 	var out strings.Builder
 	out.Grow(len(css))
-	rewriteDeclarations(css, &out)
+	rewriteDeclarations(css, &out, nil, "")
 	return out.String()
 }
 
 // rewriteRuleList copies a rule list, rewriting the declaration blocks it
-// contains (mirroring rewrite_rule_list).
-func rewriteRuleList(src string, out *strings.Builder) {
+// contains (mirroring rewrite_rule_list). cap is the custom-property side
+// table collector; nil keeps the gap/font-family-only walk, non-nil also
+// extracts the --* and var() declarations (see CaptureSheet) and records
+// each captured declaration's selector and enclosing at-rule condition.
+func rewriteRuleList(src string, out *strings.Builder, cap *capture) {
 	bytes := []byte(src)
 	i := 0
 	for i < len(bytes) {
@@ -110,9 +113,15 @@ func rewriteRuleList(src string, out *strings.Builder) {
 		out.WriteString(prelude)
 		out.WriteByte('{')
 		if atRuleHoldsRules(prelude) {
-			rewriteRuleList(body, out)
+			if cap != nil {
+				cap.media = append(cap.media, atRuleCondition(prelude))
+			}
+			rewriteRuleList(body, out, cap)
+			if cap != nil {
+				cap.media = cap.media[:len(cap.media)-1]
+			}
 		} else {
-			rewriteDeclarations(body, out)
+			rewriteDeclarations(body, out, cap, strings.TrimSpace(prelude))
 		}
 		out.WriteByte('}')
 		i = blockEnd + 1
@@ -120,8 +129,9 @@ func rewriteRuleList(src string, out *strings.Builder) {
 }
 
 // rewriteDeclarations copies a declaration list, rewriting the gap
-// declarations (mirroring rewrite_declarations).
-func rewriteDeclarations(src string, out *strings.Builder) {
+// declarations (mirroring rewrite_declarations). selector/media are the
+// capture context of the enclosing rule; "" for an inline list.
+func rewriteDeclarations(src string, out *strings.Builder, cap *capture, selector string) {
 	bytes := []byte(src)
 	segment := 0
 	for j := 0; j < len(bytes); {
@@ -133,7 +143,7 @@ func rewriteDeclarations(src string, out *strings.Builder) {
 			j = skipString(bytes, j)
 			continue
 		case b == ';':
-			rewriteDeclaration(src[segment:j], out)
+			rewriteDeclaration(src[segment:j], out, cap, selector)
 			out.WriteByte(';')
 			j++
 			segment = j
@@ -141,19 +151,43 @@ func rewriteDeclarations(src string, out *strings.Builder) {
 		}
 		j++
 	}
-	rewriteDeclaration(src[segment:], out)
+	rewriteDeclaration(src[segment:], out, cap, selector)
 }
 
-// rewriteDeclaration rewrites one declaration: the gap properties become
-// the carriers, the author's minimum/maximum widths are dropped, and
-// font-family is normalised (mirroring rewrite_declaration).
-func rewriteDeclaration(decl string, out *strings.Builder) {
+// rewriteDeclaration rewrites one declaration: the custom-property side
+// table wins first — a --* or var() declaration is captured and leaves
+// no text behind for libcss (which would discard it anyway) — then the
+// gap properties become the carriers, the author's minimum/maximum
+// widths are dropped, and font-family is normalised (mirroring
+// rewrite_declaration).
+func rewriteDeclaration(decl string, out *strings.Builder, cap *capture, selector string) {
 	property, value, ok := SplitDeclaration(decl)
 	if !ok {
 		out.WriteString(decl)
 		return
 	}
-	name := asciiLower(strings.TrimSpace(property))
+	trimmed := strings.TrimSpace(property)
+	if cap != nil {
+		core, important := SplitImportant(value)
+		if strings.HasPrefix(trimmed, "--") || containsVarFunction(core) {
+			// Custom properties keep their authored case (they are
+			// case-sensitive); ordinary names travel lowercased.
+			key := asciiLower(trimmed)
+			if strings.HasPrefix(trimmed, "--") {
+				key = trimmed
+			}
+			cap.decls = append(cap.decls, CustomDecl{
+				Property:  key,
+				Value:     core,
+				Selector:  selector,
+				Media:     strings.Join(cap.media, " "),
+				Important: important,
+				Order:     uint32(len(cap.decls)),
+			})
+			return
+		}
+	}
+	name := asciiLower(trimmed)
 	switch name {
 	case "gap", "row-gap", "column-gap":
 		core, important := SplitImportant(value)
@@ -196,7 +230,7 @@ func rewriteDeclaration(decl string, out *strings.Builder) {
 		// needs no change is copied verbatim, byte for byte.
 		"font-family":
 		core, important := SplitImportant(value)
-	 normalized := NormalizeFontFamily(core)
+		normalized := NormalizeFontFamily(core)
 		if normalized == strings.TrimSpace(core) {
 			out.WriteString(decl)
 		} else {

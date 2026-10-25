@@ -27,7 +27,7 @@ oráculo — divergencia intencionada documentada). Rama `feat/go-engine`; runne
 
 | T | Descripción | Spec | Ruta | Estado |
 |---|---|---|---|---|
-| T1 | Captura en el rewriter + resolutor (herencia + var()) | S1,S2 | delegado (mimo-v2.6-flash) | en vuelo |
+| T1 | Captura en el rewriter + resolutor (herencia + var()) | S1,S2 | delegado (mimo-v2.6-flash) | ✅ (63 PASS go/css; smoke `border: 1px solid var(--c)` → `1px solid red`) |
 | T2 | Aplicación vía cascada manual + bordes de codeberg | S3 | delegado (qwen3.8-flash) | pendiente |
 | T3 | rem/em en radios | S4 | pendiente | pendiente |
 
@@ -38,3 +38,19 @@ oráculo — divergencia intencionada documentada). Rama `feat/go-engine`; runne
   usuario: var() solo en el motor Go; "no olvides delegar tareas y ir
   construyendo por partes segun el principio de pareto". Construcción en partes
   T1 → T2 → T3, cada una con su commit.
+- **L2** (2026-10-24): **T1 entregado** (mimo-v2.6-flash). API para T2:
+  `CustomDecl{Property,Value,Selector,Media string; Important bool; Order uint32}`,
+  `CaptureSheet(css)`/`CaptureInline(decls)` → texto reescrito + capturas (libcss
+  pierde exactamente esas declaraciones, pinneado), `NewCustomProperties(doc, sheets)`,
+  `EffectiveMap` (herencia, propio manda, invalid → guaranteed-invalid),
+  `Resolve(element, value)` recursivo (fallbacks anidados, indefinidos y ciclos →
+  unresolvable=false). **Limitación registrada**: `Media` se captura pero no se
+  evalúa en esta fase — T2 debe honrarlo reusando la evaluación de media
+  existente (nunca reimplementarla). Inline `style=""` se captura por elemento
+  con `CaptureInline` y se puja `inline:true, order:u32::MAX` (patrón
+  grid/radius). 42+21 subtests en go/css; módulo 10/10; vet/gofmt limpios
+  (7 ficheros con drift de gofmt previo corregidos solo-whitespace, verificados
+  con `git diff -w`). **Consecuencia para la S7 de la migración**: cuando T2
+  aplique los bordes var(), el Go divergirá A PROPÓSITO de la medición en vivo
+  del oráculo (que descarta var() para siempre) — la paridad S7 se mide en la
+  base sin var(); el corpus no cambia. `Risk: none`.

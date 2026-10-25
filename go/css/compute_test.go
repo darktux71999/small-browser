@@ -28,7 +28,7 @@ func fixture(t *testing.T, name string) string {
 	return string(data)
 }
 
-func near(a, b float64) bool { return (a - b) < 0.01 && (b - a) < 0.01 }
+func near(a, b float64) bool { return (a-b) < 0.01 && (b-a) < 0.01 }
 
 func colorNear(actual Color, r, g, b float64) bool {
 	return near(actual.R, r) && near(actual.G, g) && near(actual.B, b) && near(actual.A, 1.0)
