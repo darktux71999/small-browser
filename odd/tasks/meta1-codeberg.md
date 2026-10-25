@@ -461,3 +461,26 @@ sería bug de anchura de caja y se corrige ahí.
   `fuzz 0%` reproduce el 1669 clavado (el fuzz12 se come la franja viva de
   11px); el AE no es comparable entre generaciones por el re-binning (24
   bandas sobre max(alturas)). `Risk: none` (medición).
+- **L23** (2026-10-25): **Familia de composición de filas ARREGLADA** (P10a,
+  muse-spark) — seis causas raíz, cada una con RED fixture-level: (1)
+  `maxContentWidth` no sumaba en filas flex (nav comprimido a 56px → 487px,
+  enlaces horizontales); (2) la cascada manual de grid aplicaba todo `@media`
+  sin evaluarlo → la regla falsa `max-width:739px` ganaba a `repeat(2,1fr)`
+  (nuevo `go/css/media.go`: gate por viewport con matcheo de tipos/and/or/comma
+  y min/max-width/height; `@container`/`@supports` siguen siempre-aplicar);
+  (3) `place-self`/`justify-self`/`align-self` sin mapear (botón stretch
+  938×108 → **288×94** alineado a la derecha de su celda, una línea); (4)
+  `minmax()` sin parsear (footer con columnas que envuelven → clampado); (5)
+  `white-space:nowrap` sin mapear (botón a 2 líneas → 1, con re-medición al
+  ancho natural para que Pango y paint coincidan); (6) hallazgo en GREEN: los
+  **ítems anónimos de flex/grid heredaban padding/márgenes del contenedor**
+  (doble conteo → shrink forzado → wrap; +44 fantasma en lineCross) — strip per
+  CSS Flexbox §4.1 / Grid §5.1. **Efecto: `LAYOUT 1000x2297 → 1000x1942`
+  (−355px) · brecha vs Firefox 628 → 273px · AE página 14.22% → 9.81%**
+  (región soporte 68474→24162 px, −65%). Nav 176.6→44 de alto; footer 365→284.
+  6 tests nuevos + 13 pins css; 46+62 top-level; módulo verde; differential sin
+  cambios vs el estado registrado (70 DIFF + net-latin1). `Risk: item 6`
+  (evidencia automatizada verde; aceptación visual en vivo con ojos humanos —
+  la ventana de integración la abre el padre). Restos documentados: nowrap solo
+  en raíces de contexto de formato (sin fragmentación inline); `@container` sin
+  evaluar (correcto a 1000px por ahora).

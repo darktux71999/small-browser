@@ -73,3 +73,31 @@ fixture with adjoining vertical block margins now diverges from the oracle
 in its layout stream (and any text-position-sensitive paint output).
 Reference: `odd/tasks/leading-fidelity.md` (S3). Orthogonal to the two
 categories above, which are unchanged.
+
+## Category: row composition (meta1 S7)
+
+The Go engine composes flex/grid rows sideways where the frozen Rust
+oracle still stacks them. Six deliberate divergences, all from the frozen
+oracle sharing the old behavior (the Go port was faithful until here):
+(1) the manual grid cascade now gates `@media` blocks on the layout
+viewport (an unconditional walk let a later `max-width` single-column rule
+beat `repeat(2,1fr)` at 1000px); `@container`/`@supports` still apply
+unconditionally — container queries stay unevaluated; (2) `place-self` /
+`justify-self` / `align-self` map into the grid item and shrink non-auto
+axes to content with start/center/end placement instead of stretching;
+(3) `minmax(px,px|auto)` tracks clamp content between their bounds (a fr
+extremum degrades to auto); (4) a row flex container's max-content is the
+main-axis sum of its items (the old max sized e.g. `navbar-left` to 56px
+and wrapped its links); (5) `white-space:nowrap` suppresses wrapping at
+formatting-context roots (inline-run splitting inside block layout stays
+unmodeled); (6) anonymous flex/grid items no longer inherit the
+container's padding and margins (the old double-count forced a bogus
+shrink+wrap and inflated rows). Measured blast radius on the corpus:
+stream-identical to the registered state (70 DIFF + `net-latin1`
+identical); only `nested-contexts.html` changes bytes within its already
+DIFF dump/png streams (nav 100px→60px tall, auth column at its content
+offset — the fix direction). Live codeberg.org: LAYOUT 1000x2297→1000x1942
+(nav one row, support 2-column with right-aligned buttons, footer
+365px→284px); whole-page AE 14.22%→9.81%, support-region AE 68474→24162.
+Reference: `odd/tasks/meta1-codeberg.md` (S7/L22). Orthogonal to the three
+categories above, which are unchanged.

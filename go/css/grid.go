@@ -57,10 +57,14 @@ type gridDecls struct {
 	hasCol    bool
 	rowSpan   uint32
 	hasRow    bool
+	justify   GridSelfAlign
+	hasJust   bool
+	align     GridSelfAlign
+	hasAlign  bool
 }
 
 func (g *gridDecls) isEmpty() bool {
-	return !g.hasColumn && !g.hasCol && !g.hasRow
+	return !g.hasColumn && !g.hasCol && !g.hasRow && !g.hasJust && !g.hasAlign
 }
 
 // gridDeclarations parses the grid properties of one declaration block; the
@@ -92,14 +96,39 @@ func gridDeclarations(body string) gridDecls {
 				decls.hasRow = true
 				decls.important = decls.important || important
 			}
+		case "place-self":
+			core, important := SplitImportant(value)
+			align, justify := parsePlaceSelf(core)
+			decls.align = align
+			decls.hasAlign = true
+			decls.justify = justify
+			decls.hasJust = true
+			decls.important = decls.important || important
+		case "justify-self":
+			core, important := SplitImportant(value)
+			decls.justify = parseSelfAlign(core)
+			decls.hasJust = true
+			decls.important = decls.important || important
+		case "align-self":
+			core, important := SplitImportant(value)
+			decls.align = parseSelfAlign(core)
+			decls.hasAlign = true
+			decls.important = decls.important || important
 		}
 	}
 	return decls
 }
 
 // applyGridStyles runs the grid cascade over the author sheets and fills
-// the track lists and spans into `out`.
-func applyGridStyles(doc NodeIndex, sheets []string, out []Style) {
+// the track lists and spans into `out`. @media blocks apply only when
+// their query matches the layout viewport (CSS Media Queries 3/4 core:
+// media types, and/or lists, min-/max-width/height in px; unknown features
+// evaluate to not-matching, mirroring libcss' own @media gating of the
+// computed cascade). The other rule-holding at-rules (@container,
+// @supports, ...) still apply unconditionally — the engine cannot evaluate
+// container queries, so their current always-apply behavior is preserved.
+// viewportWidth/Height are the CSS pixels css.Compute laid out with.
+func applyGridStyles(doc NodeIndex, sheets []string, viewportWidth, viewportHeight float64, out []Style) {
 	type gridBid struct {
 		cascadeBid
 		columns string
@@ -108,6 +137,10 @@ func applyGridStyles(doc NodeIndex, sheets []string, out []Style) {
 		hasCS   bool
 		rowSpan uint32
 		hasRS   bool
+		justify GridSelfAlign
+		hasJ    bool
+		align   GridSelfAlign
+		hasA    bool
 	}
 
 	best := make([]*gridBid, len(out))
@@ -134,6 +167,14 @@ func applyGridStyles(doc NodeIndex, sheets []string, out []Style) {
 				merged.rowSpan = prev.rowSpan
 				merged.hasRS = prev.hasRS
 			}
+			if !bid.hasJ {
+				merged.justify = prev.justify
+				merged.hasJ = prev.hasJ
+			}
+			if !bid.hasA {
+				merged.align = prev.align
+				merged.hasA = prev.hasA
+			}
 		}
 		if wins {
 			kept := merged
@@ -142,7 +183,7 @@ func applyGridStyles(doc NodeIndex, sheets []string, out []Style) {
 	}
 
 	for _, sheet := range sheets {
-		ForEachStyleRule(sheet, func(prelude, body string) {
+		ForEachStyleRuleViewport(sheet, viewportWidth, viewportHeight, func(prelude, body string) {
 			order++
 			decls := gridDeclarations(body)
 			if decls.isEmpty() {
@@ -168,6 +209,10 @@ func applyGridStyles(doc NodeIndex, sheets []string, out []Style) {
 						hasCS:   decls.hasCol,
 						rowSpan: decls.rowSpan,
 						hasRS:   decls.hasRow,
+						justify: decls.justify,
+						hasJ:    decls.hasJust,
+						align:   decls.align,
+						hasA:    decls.hasAlign,
 					}, best)
 				}
 			}
@@ -198,6 +243,10 @@ func applyGridStyles(doc NodeIndex, sheets []string, out []Style) {
 			hasCS:   parsed.hasCol,
 			rowSpan: parsed.rowSpan,
 			hasRS:   parsed.hasRow,
+			justify: parsed.justify,
+			hasJ:    parsed.hasJust,
+			align:   parsed.align,
+			hasA:    parsed.hasAlign,
 		}, best)
 	}
 
@@ -210,6 +259,12 @@ func applyGridStyles(doc NodeIndex, sheets []string, out []Style) {
 		}
 		if bid.hasRS {
 			out[id].GridItem.RowSpan = bid.rowSpan
+		}
+		if bid.hasJ {
+			out[id].GridItem.Justify = bid.justify
+		}
+		if bid.hasA {
+			out[id].GridItem.Align = bid.align
 		}
 		if out[id].Grid != nil {
 			var tracks []GridTrack
@@ -556,6 +611,17 @@ func parseGridTrack(token string) GridTrack {
 	if asciiEqualFold(token, "auto") {
 		return GridTrack{Kind: TrackAuto}
 	}
+	// minmax(min, max): each bound is a px length or auto (CSS Grid L3
+	// §5.2.1). A bound with any other unit, or a fr extremum, degrades to
+	// a plain auto track instead of failing the declaration.
+	if inner, found := cutFoldPrefix(token, "minmax("); found {
+		if body, ok := strings.CutSuffix(inner, ")"); ok {
+			if track, ok := parseMinmaxTrack(body); ok {
+				return track
+			}
+		}
+		return GridTrack{Kind: TrackAuto}
+	}
 	// The suffix strips are case-sensitive pairs exactly like Rust's
 	// strip_suffix("px").or(strip_suffix("PX")).
 	if number, found := strings.CutSuffix(token, "px"); found {
@@ -583,6 +649,63 @@ func parseGridTrack(token string) GridTrack {
 		return GridTrack{Kind: TrackAuto}
 	}
 	return GridTrack{Kind: TrackAuto}
+}
+
+// parseMinmaxTrack parses the inside of minmax(min, max): two comma
+// arguments, each a px length or auto. ok is false for anything else (a fr
+// extremum, a percentage, unparsable text), and the caller degrades the
+// whole track to auto.
+func parseMinmaxTrack(body string) (GridTrack, bool) {
+	args := SplitCommaList(body)
+	if len(args) != 2 {
+		return GridTrack{}, false
+	}
+	track := GridTrack{Kind: TrackMinMax}
+	for i, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if asciiEqualFold(arg, "auto") {
+			if i == 0 {
+				track.MinAuto = true
+			} else {
+				track.MaxAuto = true
+			}
+			continue
+		}
+		var px float64
+		var ok bool
+		if number, found := strings.CutSuffix(arg, "px"); found {
+			px, ok = parseNumber(number)
+		} else if number, found := strings.CutSuffix(arg, "PX"); found {
+			px, ok = parseNumber(number)
+		}
+		if !ok || !isFinite(px) || px < 0 {
+			return GridTrack{}, false
+		}
+		if i == 0 {
+			track.Min = px
+		} else {
+			track.Max = px
+		}
+	}
+	return track, true
+}
+
+// cutFoldPrefix cuts a case-insensitive ASCII prefix, mirroring the
+// repeat(/REPEAT( handling of expandRepeat.
+func cutFoldPrefix(token, prefix string) (string, bool) {
+	if len(token) < len(prefix) {
+		return "", false
+	}
+	for i := 0; i < len(prefix); i++ {
+		c, p := token[i], prefix[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != p {
+			return "", false
+		}
+	}
+	return token[len(prefix):], true
 }
 
 // expandRepeat expands repeat(n, track) over a single track; nil when the
@@ -620,6 +743,40 @@ func expandRepeat(token string) []GridTrack {
 		out[i] = one
 	}
 	return out
+}
+
+// parsePlaceSelf parses a place-self value into its (align, justify) axes
+// (CSS Box Alignment L3 §7: the first value aligns the block axis, the
+// optional second the inline axis; one value sets both).
+func parsePlaceSelf(value string) (GridSelfAlign, GridSelfAlign) {
+	words := strings.Fields(value)
+	if len(words) == 0 {
+		return GridSelfAuto, GridSelfAuto
+	}
+	align := parseSelfAlign(words[0])
+	if len(words) == 1 {
+		return align, align
+	}
+	return align, parseSelfAlign(words[1])
+}
+
+// parseSelfAlign parses one self-alignment keyword (CSS Box Alignment L3
+// §§5-6). left/right degrade to start/end: the engine lays out
+// left-to-right only. Anything unknown is auto (stretch), the same
+// degradation the track parser applies to unknown tokens.
+func parseSelfAlign(value string) GridSelfAlign {
+	switch asciiLower(strings.TrimSpace(value)) {
+	case "stretch":
+		return GridSelfStretch
+	case "start", "flex-start", "self-start", "left":
+		return GridSelfStart
+	case "end", "flex-end", "self-end", "right":
+		return GridSelfEnd
+	case "center":
+		return GridSelfCenter
+	default:
+		return GridSelfAuto
+	}
 }
 
 // parseGridSpan parses a grid-column/grid-row value into the number of

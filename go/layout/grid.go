@@ -133,8 +133,10 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 	}
 
 	// 2. The track widths: definite tracks keep their size, auto tracks
-	// size to the content of the items that occupy only them, and fr
-	// tracks share the free space that is left (src/layout.rs:1013-1039).
+	// size to the content of the items that occupy only them, minmax
+	// tracks clamp that content between their bounds (CSS Grid L3
+	// §12.4-§12.5: floor at min, cap at max, auto bounds unbounded), and
+	// fr tracks share the free space that is left (src/layout.rs:1013-1039).
 	widths := make([]float64, ncols)
 	var frTotal float64
 	for index, track := range tracks {
@@ -143,6 +145,15 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 			widths[index] = track.Value
 		case css.TrackFr:
 			frTotal += track.Value
+		case css.TrackMinMax:
+			content := autoTrackWidth(items, index, doc, styles, st)
+			if !track.MinAuto {
+				content = max(content, track.Min)
+			}
+			if !track.MaxAuto {
+				content = min(content, track.Max)
+			}
+			widths[index] = max(content, 0)
 		default: // TrackAuto
 			widths[index] = autoTrackWidth(items, index, doc, styles, st)
 		}
@@ -198,6 +209,44 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 		items[i].y = rowY[items[i].row]
 		items[i].w = spanSize(widths, items[i].col, int(items[i].colSpan), colGap)
 		items[i].h = spanSize(heights, items[i].row, int(items[i].rowSpan), rowGap)
+		// Self alignment (CSS Box Alignment L3 §§5-6): a non-auto,
+		// non-stretch axis shrinks the item to its content and aligns it
+		// inside the cell instead of stretching across it. Auto keeps the
+		// stretch above: the engine models no *-items properties. The
+		// alignment fits the border box (content plus padding) in the
+		// cell, so a padded item still ends flush with the cell edge.
+		if items[i].style.GridItem.Justify != css.GridSelfAuto &&
+			items[i].style.GridItem.Justify != css.GridSelfStretch {
+			view := flexViewOf(&items[i])
+			wPad := items[i].style.Padding[3] + items[i].style.Padding[1]
+			contentW := itemMaxContentWidth(&view, doc, styles, st)
+			// The border box must fit the track: the content is whatever
+			// is left after the item's own padding.
+			borderW := min(contentW+wPad, items[i].w)
+			borderW = max(borderW, 0)
+			switch items[i].style.GridItem.Justify {
+			case css.GridSelfCenter:
+				items[i].x += (items[i].w - borderW) / 2
+			case css.GridSelfEnd:
+				items[i].x += items[i].w - borderW
+			}
+			items[i].w = max(borderW-wPad, 0)
+		}
+		if items[i].style.GridItem.Align != css.GridSelfAuto &&
+			items[i].style.GridItem.Align != css.GridSelfStretch {
+			view := flexViewOf(&items[i])
+			hPad := items[i].style.Padding[0] + items[i].style.Padding[2]
+			contentH := measureItemHeight(doc, styles, &view, true, max(items[i].w, 0), st)
+			borderH := min(contentH+hPad, items[i].h)
+			borderH = max(borderH, 0)
+			switch items[i].style.GridItem.Align {
+			case css.GridSelfCenter:
+				items[i].y += (items[i].h - borderH) / 2
+			case css.GridSelfEnd:
+				items[i].y += items[i].h - borderH
+			}
+			items[i].h = max(borderH-hPad, 0)
+		}
 	}
 
 	// 5. The items are laid out for real, stretched to fill their cell
@@ -263,10 +312,15 @@ func collectGridItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []gr
 		// An anonymous item has no box of its own in CSS: the
 		// container's border and radius must not wrap each text
 		// fragment, so they are stripped here (the container box
-		// itself still paints them).
+		// itself still paints them). Padding and margins are stripped
+		// too: an anonymous item carries none of its own (CSS Grid
+		// §5.1), so keeping the container's would double-count them —
+		// once in the item's outer size and once in the container box.
 		anon := styles[id]
 		anon.BorderWidth = [4]float64{}
 		anon.BorderRadius = [4]css.Radius{}
+		anon.Padding = [4]float64{}
+		anon.Margin = [4]float64{}
 		s := text.String()
 		items = append(items, gridItem{node: NoNode, text: &s, style: anon, colSpan: 1, rowSpan: 1})
 		text.Reset()

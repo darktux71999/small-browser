@@ -311,7 +311,10 @@ func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style
 
 	// Grid placement properties are invisible to libcss: they are read from
 	// the same author sheets here, after the cascade above fixed display.
-	applyGridStyles(doc, cssTexts, out)
+	// The viewport travels along so @media-guarded track lists apply only
+	// when their query matches (height is the same 600px libcss selects
+	// against).
+	applyGridStyles(doc, cssTexts, viewportWidth, defaultViewportHeight, out)
 	// border-radius is invisible to libcss too (no computed getter): the
 	// same manual cascade reads it from the same author sheets.
 	applyBorderRadiusStyles(doc, cssTexts, out)

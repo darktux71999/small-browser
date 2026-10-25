@@ -338,10 +338,16 @@ func collectFlexItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []fl
 		// An anonymous item has no box of its own in CSS: the
 		// container's border and radius must not wrap each text
 		// fragment, so they are stripped here (the container box
-		// itself still paints them).
+		// itself still paints them). Padding and margins are stripped
+		// too: an anonymous item carries none of its own (CSS Flexbox
+		// §4.1), so keeping the container's would double-count them —
+		// once in the item's outer size (forcing a bogus shrink and
+		// wrap) and once in the container's own box.
 		anon := styles[id]
 		anon.BorderWidth = [4]float64{}
 		anon.BorderRadius = [4]css.Radius{}
+		anon.Padding = [4]float64{}
+		anon.Margin = [4]float64{}
 		s := text.String()
 		items = append(items, flexItem{node: NoNode, text: &s, style: anon})
 		text.Reset()
@@ -585,17 +591,26 @@ func measureItemHeight(doc *dom.Document, styles []css.Style, item *flexItem, ro
 }
 
 // measureTextHeight is the height of a text run laid out at width
-// (src/layout.rs:1382-1389).
+// (src/layout.rs:1382-1389). A nowrap run measures unwrapped, like the
+// flush path.
 func measureTextHeight(st *state, text string, style *css.Style, width float64) float64 {
 	normalized := strings.Join(strings.Fields(text), " ")
 	if normalized == "" {
 		return 0
 	}
+	if style.WhiteSpaceNowrap {
+		width = nowrapWidth
+	}
 	return st.shaper.Measure(normalized, adaptStyle(style), max(width, 1)).Height
 }
 
 // maxContentWidth is the width the content of an item would take without
-// wrapping. Exact port (src/layout.rs:1391-1422).
+// wrapping. Exact port (src/layout.rs:1391-1422). A row flex container sums
+// its items along the main axis (CSS Flexbox L1 §9.2: the max-content size
+// of a single-line row container is the sum of its flex items); every
+// other box keeps the block-style max below. The caller adds the node's
+// own padding and margins (flexBaseSize feeds itemOuterMain), so the sum
+// runs over content widths only.
 func maxContentWidth(doc *dom.Document, styles []css.Style, id dom.NodeID, st *state) float64 {
 	style := &styles[id]
 	if isImage(doc, id) {
@@ -603,6 +618,9 @@ func maxContentWidth(doc *dom.Document, styles []css.Style, id dom.NodeID, st *s
 			return float64(image.Width)
 		}
 		return 0
+	}
+	if style.Flex != nil && style.Flex.Direction == css.FlexDirectionRow {
+		return maxContentWidthRowFlex(style, doc, styles, id, st)
 	}
 	var width float64
 	var text strings.Builder
@@ -625,6 +643,58 @@ func maxContentWidth(doc *dom.Document, styles []css.Style, id dom.NodeID, st *s
 		width = max(width, naturalTextWidth(st, text.String(), style))
 	}
 	return width
+}
+
+// maxContentWidthRowFlex is the max-content width of a row flex
+// container: the main-axis sum of its items' content widths plus the gaps
+// between them. Block-level children recurse (nested row containers sum
+// again, column containers and blocks take their max); inline runs form
+// the single anonymous item the collector would build, contributing their
+// unwrapped width; images contribute their intrinsic width. Blank runs
+// contribute nothing, mirroring the collector dropping blank text.
+func maxContentWidthRowFlex(style *css.Style, doc *dom.Document, styles []css.Style, id dom.NodeID, st *state) float64 {
+	var total float64
+	var text strings.Builder
+	items := 0
+	flush := func() {
+		if strings.TrimSpace(text.String()) == "" {
+			text.Reset()
+			return
+		}
+		total += naturalTextWidth(st, text.String(), style)
+		items++
+		text.Reset()
+	}
+	for _, child := range doc.Nodes[id].Children {
+		childStyle := &styles[child]
+		if childStyle.Display == css.DisplayNone {
+			continue
+		}
+		if isImage(doc, child) {
+			flush()
+			if image := st.images.Image(child); image != nil {
+				total += float64(image.Width)
+			}
+			items++
+			continue
+		}
+		if childStyle.Display == css.DisplayBlock {
+			flush()
+			pad := childStyle.Padding[3] + childStyle.Padding[1]
+			mStart, mEnd := mainMargins(childStyle, true)
+			total += maxContentWidth(doc, styles, child, st) + pad + mStart + mEnd
+			items++
+			continue
+		}
+		collectInlineText(doc, child, &text)
+	}
+	flush()
+	gaps := items - 1
+	if gaps < 0 {
+		gaps = 0
+	}
+	total += style.Flex.ColumnGap * float64(gaps)
+	return total
 }
 
 // naturalTextWidth is the width of a text run measured without wrapping

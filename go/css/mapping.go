@@ -583,6 +583,7 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 	// Keep layout/paint's coarse flags in sync with the typography fields.
 	out.Bold = out.FontWeight >= 600
 	out.InlineAlign = out.TextAlign == TextAlignCenter
+	out.WhiteSpaceNowrap = uint8(C.css_computed_white_space(style)) == cssWhiteSpaceNowrap
 
 	return out
 }

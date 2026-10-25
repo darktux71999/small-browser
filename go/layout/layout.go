@@ -677,13 +677,35 @@ func collectInlineText(doc *dom.Document, id dom.NodeID, out *strings.Builder) {
 // strings.Fields splits on Unicode White Space, matching Rust's
 // split_whitespace on the White_Space property for every character the
 // engine's fixtures use.
+// nowrapWidth is the measuring width of a white-space:nowrap run: wide
+// enough that Pango never breaks the line (CSS Text L3 §4.1.2: wrapping
+// suppressed, collapsing preserved), far below the i32 Pango-unit range
+// the shaper lays out in (the same scale the max-content probes use).
+const nowrapWidth = 1000000.0
+
 func (st *state) flushText(style *css.Style, x, y, width float64, run *strings.Builder) float64 {
 	text := strings.Join(strings.Fields(run.String()), " ")
 	run.Reset()
 	if text == "" {
 		return 0
 	}
-	measured := st.shaper.Measure(text, adaptStyle(style), width)
+	measureWidth := width
+	if style.WhiteSpaceNowrap {
+		measureWidth = nowrapWidth
+	}
+	measured := st.shaper.Measure(text, adaptStyle(style), measureWidth)
+	if style.WhiteSpaceNowrap && len(measured.Lines) == 1 {
+		// Pango positions the line inside the vast probe width, so a
+		// centered or right-aligned run would land off-screen (and the
+		// painter, which re-wraps from the stored width, would disagree
+		// with the boxes). Re-resolve the single line against its own
+		// natural width — the +1px keeps float dust from re-breaking it
+		// — so alignment offsets stay in the run and paint agrees.
+		if natural := measured.Lines[0].W + 1; natural < measureWidth && natural > 0 {
+			measureWidth = natural
+			measured = st.shaper.Measure(text, adaptStyle(style), measureWidth)
+		}
+	}
 	for _, line := range measured.Lines {
 		if line.Text == "" {
 			continue
@@ -702,7 +724,7 @@ func (st *state) flushText(style *css.Style, x, y, width float64, run *strings.B
 			BorderColor: [4]css.Color{style.Color, style.Color, style.Color, style.Color},
 		})
 	}
-	st.out.Runs = append(st.out.Runs, TextRun{X: x, Y: y, Width: width, Text: text, Style: *style})
+	st.out.Runs = append(st.out.Runs, TextRun{X: x, Y: y, Width: measureWidth, Text: text, Style: *style})
 	return measured.Height
 }
 

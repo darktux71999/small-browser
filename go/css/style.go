@@ -131,20 +131,29 @@ type FlexItemProps struct {
 type TrackKind uint8
 
 // Track values: a definite length, a flexible fraction (fr), sized to
-// content (auto).
+// content (auto), or clamped between bounds (minmax).
 const (
 	TrackAuto TrackKind = iota
 	TrackPx
 	TrackFr
+	TrackMinMax
 )
 
 // GridTrack is one entry of grid-template-columns in the minimal grid.
 type GridTrack struct {
-	// Kind selects Px, Fr or Auto. The Value holds the Px/Fr number.
+	// Kind selects Px, Fr, Auto or MinMax. The Value holds the Px/Fr
+	// number.
 	Kind TrackKind
 	// Value is the length in CSS pixels (Kind == TrackPx) or the fr
 	// fraction (Kind == TrackFr).
 	Value float64
+	// Min and Max are the lower and upper bounds in CSS pixels (Kind ==
+	// TrackMinMax). MinAuto/MaxAuto mark an auto bound: the track then
+	// floors at zero content or grows unbounded, respectively.
+	Min     float64
+	MinAuto bool
+	Max     float64
+	MaxAuto bool
 }
 
 // GridStyle is a grid container's properties. Tracks is the explicit
@@ -153,11 +162,32 @@ type GridStyle struct {
 	Tracks []GridTrack
 }
 
+// GridSelfAlign is one axis of a grid item's self alignment (CSS Box
+// Alignment L3 §§5-7: align-self, justify-self, and the place-self
+// shorthand). Auto behaves as the parent's justify-items/align-items; the
+// engine models no *-items properties, so auto means stretch — the CSS
+// initial value of both. Left maps to Start and right to End: the engine
+// lays out left-to-right only.
+type GridSelfAlign uint8
+
+// Grid self-alignment values.
+const (
+	GridSelfAuto GridSelfAlign = iota
+	GridSelfStretch
+	GridSelfStart
+	GridSelfCenter
+	GridSelfEnd
+)
+
 // GridItemProps is the element's own grid item properties: how many tracks
-// it spans.
+// it spans and its self alignment on each axis.
 type GridItemProps struct {
 	ColSpan uint32
 	RowSpan uint32
+	// Justify is the inline-axis self alignment (justify-self).
+	Justify GridSelfAlign
+	// Align is the block-axis self alignment (align-self).
+	Align GridSelfAlign
 }
 
 // Color is an RGBA colour with components in [0,1] (r/g/b/a), mirroring
@@ -255,6 +285,11 @@ type Style struct {
 	Bold bool
 	// InlineAlign mirrors TextAlign == Center for layout/paint.
 	InlineAlign bool
+	// WhiteSpaceNowrap mirrors white-space: nowrap (CSS Text L3 §4.1.2:
+	// collapsing preserved, wrapping suppressed). Only nowrap is mapped;
+	// pre/pre-wrap/pre-line keep normal wrapping, the engine's standing
+	// approximation.
+	WhiteSpaceNowrap bool
 	// Flex holds the flex container properties, when the element is one.
 	Flex *FlexStyle
 	// FlexItem is the element's own flex item properties.

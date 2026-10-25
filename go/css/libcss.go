@@ -100,6 +100,8 @@ const (
 
 	cssLetterSpacingSet = uint8(0x1)
 
+	cssWhiteSpaceNowrap = uint8(0x3)
+
 	cssColumnGapSet = uint8(0x1)
 
 	cssMinWidthSet = uint8(0x1)
