@@ -559,3 +559,26 @@ sería bug de anchura de caja y se corrige ahí.
   categoría de cajas relativas/constrained añadida + las dos pendientes de
   `var()` y `rem/em` (prometidas en el commit de P11b). `Risk: item 6`
   (aceptación visual con ojos humanos — la ventana la abre el padre).
+- **L28** (2026-10-25): **🎯 OBJETIVO MEDIBLE DE LA S7 CUMPLIDO — bandas 3-10:
+  8/8 < 20%** (P13, muse-spark — unidad de investigación, cero cambios de
+  código). Tabla verificada por el padre con el rig (`tools/fidelity-bands.py`):
+  3:12.78 · 4:8.34 · 5:5.74 · 6:19.76 · **7:18.24** · 8:10.30 · 9:10.22 ·
+  10:8.86 · página entera **9.65%** (motor 1000×1967, ref 988×1669). La banda 7
+  la cerró el fix de geometría de P11 (21.45→18.24%; la bin de la era M4 sobre
+  renders actuales da 19.18% — mejora real, no re-binning); estable en 3
+  corridas byte-idénticas. **Causas de la banda 7 nombradas con evidencia**:
+  ~70% es `position:absolute` sin soporte (el botón register: contenedor
+  abspos `top:-3em left/right:-2em` cae como 4ª columna flex — slab amarilla
+  de 205px a toda altura vs la píldora centrada de 240px de Firefox) y ~30%
+  deriva de referencia (72px: la captura congelada lleva el banner ToU JS que
+  nuestro motor sin-JS oculta correctamente). **Los stops de gradiente NO son
+  causa** (eliminado con evidencia: las filas de la card caen en la zona plana
+  del ramp). **Caveats honestos**: banda 6 fina (19.76%), sensibilidad al
+  método (con fuzz-0 la banda 7 daría 23.88% — el cumplimiento descansa en el
+  método fijado fuzz-25% de L20), y la banda 1 (48.64%) es atribución
+  reference-side sin fix posible. **Siguiente frente propuesto** (unidad
+  aparte): `position:absolute` mínimo (bloque contenedor, top/left/right,
+  static-position, exclusión de items flex per Flexbox §4) — la simulación PNG
+  predice banda 7 → ~11% y la card 437→~370 hacia los ~325 de Firefox. Nota de
+  método: la simulación cortando/pegando rects en PNG predice el movimiento de
+  bandas antes de implementar. `Risk: none` (investigación sin ediciones).
