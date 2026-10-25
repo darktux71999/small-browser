@@ -20,6 +20,10 @@ func isUnicodeSpace(r rune) bool {
 // parse_border_radius_length). libcss 0.9.2 computes none of these
 // properties, so the same manual cascade resolution reads them straight
 // from the author stylesheets after the computed cascade fixed display.
+// S4 extends the radius reader with rem/em (resolved against the computed
+// font sizes: the root element's for rem, the element's own for em) and
+// resolves var() values first — the S4 contract's approximation, which
+// the frozen oracle lacks until its own S4 lands.
 
 type cascadeBid struct {
 	important   bool
@@ -285,7 +289,10 @@ func radiusDeclarations(body string) radiusDecls {
 }
 
 // applyBorderRadiusStyles runs the radius cascade over the author sheets
-// and fills the corner radii into `out`.
+// and fills the corner radii into `out`. rem/em lengths (S4) resolve
+// against the computed font sizes — the root element's for rem, each
+// element's own for em — and a value arriving through var() is resolved
+// per element first, then parsed by the same reader as a plain value.
 func applyBorderRadiusStyles(doc NodeIndex, sheets []string, out []Style) {
 	type radiusBid struct {
 		cascadeBid
@@ -376,28 +383,77 @@ func applyBorderRadiusStyles(doc NodeIndex, sheets []string, out []Style) {
 		}, best)
 	}
 
+	// The rem resolution source: the root element's computed font-size,
+	// reused from Style (16 unless html declares another size).
+	remPx := rootFontSizePx(doc, out)
+
+	// A radius value may arrive through var(): the rewriter captures
+	// border-radius: var(...) declarations (libcss 0.9.2 discards them, so
+	// the frozen oracle degrades such a radius), and the S4 contract
+	// resolves them here — cp.Resolve's answer goes through the same
+	// length reader as a plain value. The side table is captured on first
+	// use: documents without a var() radius never pay for the walk. An
+	// unresolvable var() degrades exactly like the unparsable text it was
+	// before S4: the declaration contributes nothing.
+	var cp *CustomProperties
+	resolve := func(id int, value string) (string, bool) {
+		if !containsVarFunction(value) {
+			return value, true
+		}
+		if cp == nil {
+			cp = NewCustomProperties(doc, sheets)
+		}
+		return cp.Resolve(id, value)
+	}
+
 	for id, bid := range best {
 		if bid == nil {
 			continue
+		}
+		// The em resolution source: the element's own computed
+		// font-size, reused from Style (16 when somehow unknown).
+		emPx := out[id].FontSize
+		if !isFinite(emPx) {
+			emPx = defaultFontSize
 		}
 		var radii [4]Radius
 		for i := range radii {
 			radii[i] = RadiusPx(0)
 		}
 		if bid.hasSh {
-			if parsed := parseBorderRadius(bid.shorthand); parsed != nil {
-				copy(radii[:], parsed)
+			if value, ok := resolve(id, bid.shorthand); ok {
+				if parsed := parseBorderRadius(value, emPx, remPx); parsed != nil {
+					copy(radii[:], parsed)
+				}
 			}
 		}
 		for index := 0; index < 4; index++ {
 			if bid.cornerSet[index] {
-				if radius, ok := parseBorderRadiusLength(bid.corners[index]); ok {
-					radii[index] = radius
+				if value, ok := resolve(id, bid.corners[index]); ok {
+					if radius, ok := parseBorderRadiusLength(value, emPx, remPx); ok {
+						radii[index] = radius
+					}
 				}
 			}
 		}
 		out[id].BorderRadius = radii
 	}
+}
+
+// rootFontSizePx answers the root element's computed font-size, the rem
+// resolution source: Style.FontSize of the html element (libcss' computed
+// value, reused as-is), 16 when the document has no root element or its
+// size is unknown.
+func rootFontSizePx(doc NodeIndex, out []Style) float64 {
+	for id := 0; id < doc.Len(); id++ {
+		if id != doc.Root() && isRootElement(doc, id) {
+			if px := out[id].FontSize; isFinite(px) {
+				return px
+			}
+			return defaultFontSize
+		}
+	}
+	return defaultFontSize
 }
 
 // selectorSpecificity approximates a selector the way the cascade orders it:
@@ -593,8 +649,18 @@ func parseGridSpan(value string) (uint32, bool) {
 }
 
 // parseBorderRadiusLength parses one radius length: a percentage (kept as
-// specified) or an absolute px length.
-func parseBorderRadiusLength(value string) (Radius, bool) {
+// specified), a rem or em length (S4: resolved against the font sizes the
+// caller supplies — remPx the root element's computed font-size, 16 unless
+// html declares another size, emPx the element's own computed font-size,
+// 16 when unknown; the approximation the S4 contract pins, always reusing
+// Style.FontSize instead of recomputing font sizes), or an absolute
+// px/pt length. Unresolvable input — an unknown unit (in, cm, ...), a
+// negative or non-finite value, unparsable text — reports false, and the
+// reader keeps the degradation it had before rem/em: a failing shorthand
+// leaves all four corners at the default 0px, a failing corner keeps the
+// value the winning shorthand left. Unit matching is case-sensitive, like
+// parsePxText's px/pt.
+func parseBorderRadiusLength(value string, emPx, remPx float64) (Radius, bool) {
 	v := strings.TrimSpace(value)
 	if number, found := strings.CutSuffix(v, "%"); found {
 		pct, ok := parseNumber(strings.TrimSpace(number))
@@ -602,6 +668,18 @@ func parseBorderRadiusLength(value string) (Radius, bool) {
 			return Radius{}, false
 		}
 		return RadiusPercent(pct), true
+	}
+	if number, found := strings.CutSuffix(v, "rem"); found {
+		if n, ok := parseNumber(strings.TrimSpace(number)); ok && isFinite(n) && n >= 0 && isFinite(remPx) {
+			return RadiusPx(n * remPx), true
+		}
+		return Radius{}, false
+	}
+	if number, found := strings.CutSuffix(v, "em"); found {
+		if n, ok := parseNumber(strings.TrimSpace(number)); ok && isFinite(n) && n >= 0 && isFinite(emPx) {
+			return RadiusPx(n * emPx), true
+		}
+		return Radius{}, false
 	}
 	px, ok := parsePxText(v)
 	if !ok || !isFinite(px) || px < 0 {
@@ -614,11 +692,11 @@ func parseBorderRadiusLength(value string) (Radius, bool) {
 // top-right, bottom-right, bottom-left, the CSS order) with an optional
 // `/ <vertical>` half that is dropped (elliptical radii degrade to the
 // horizontal radius). nil when any length is invalid.
-func parseBorderRadius(value string) []Radius {
+func parseBorderRadius(value string, emPx, remPx float64) []Radius {
 	horizontal := strings.SplitN(value, "/", 2)[0]
 	var radii []Radius
 	for _, part := range strings.Fields(horizontal) {
-		radius, ok := parseBorderRadiusLength(part)
+		radius, ok := parseBorderRadiusLength(part, emPx, remPx)
 		if !ok {
 			return nil
 		}

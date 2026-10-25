@@ -29,7 +29,7 @@ oráculo — divergencia intencionada documentada). Rama `feat/go-engine`; runne
 |---|---|---|---|---|
 | T1 | Captura en el rewriter + resolutor (herencia + var()) | S1,S2 | delegado (mimo-v2.6-flash) | ✅ (63 PASS go/css; smoke `border: 1px solid var(--c)` → `1px solid red`) |
 | T2 | Aplicación vía cascada manual + bordes de codeberg | S3 | delegado (qwen3.8-flash) | ✅ (73 PASS; corpus 62/71 sin cambios; live 1000x3175; borde pintado a píxel) |
-| T3 | rem/em en radios | S4 | pendiente | pendiente |
+| T3 | rem/em en radios | S4 | delegado (ling-3.1-flash) | ✅ (101 PASS; corpus 62/71 sin cambios; `.28571429rem` → 4.57142864px) |
 
 ## Log
 
@@ -80,3 +80,19 @@ oráculo — divergencia intencionada documentada). Rama `feat/go-engine`; runne
   **`medium` / `under_budget` → review NO debido** (la porción queda pendiente
   hasta que un commit posterior alcance el presupuesto). Commits previos de
   feat/go-engine sin assess (lapse del padre, registrado aquí).
+- **L4** (2026-10-24): **T3 entregado** (ling-3.1-flash — estreno del modelo,
+  cero rondas). S4 completa en `go/css/grid.go`: `parseBorderRadiusLength` y
+  `parseBorderRadius` resuelven `rem`/`em` (case-sensitive, `rem` se pelan antes
+  que `em`); `remPx` = font-size computado del elemento raíz (`rootFontSizePx`
+  **salta el nodo documento sintético** — si no, rem se clava en 16px),
+  `emPx` = `FontSize` propio del elemento (16 solo si no finito); px/pt/%/bare
+  byte-idénticos; unidades desconocidas degradan exactamente igual que antes.
+  Los radios que llegan por `var()` se resuelven por elemento con un
+  `CustomProperties` lazy (los documentos sin var() no pagan nada) y
+  comparten parser con el camino plano. Forjado: `.28571429rem` → 4.57142864px.
+  101 PASS / 0 FAIL en go/css (73 previas intactas + 28 nuevas); módulo 10/10;
+  vet/gofmt limpios; corpus **62/71 sin cambios**; **PRESERVE base-vs-candidate
+  71/71** (método nuevo: worktree de HEAD como oráculo del runner). Divergencia
+  intencional documentada: el oráculo Rust sigue degradando rem/var a 0 (el
+  agente externo cierra rem en su lado con el mismo contrato). `Risk: none`.
+  **FEATURE COMPLETA: S1-S4 ✅.**
