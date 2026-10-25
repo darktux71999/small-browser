@@ -294,6 +294,13 @@ func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style
 	if err := applyBorderVarStyles(doc, cssTexts, out, &unitCtx, viewportWidth, handler, pw); err != nil {
 		return nil, nil, err
 	}
+	// Remaining mapped computed-style families (color, typography, box
+	// geometry and gaps) use the same captured resolver and replay the
+	// resolved declarations through libcss while the parent computed styles
+	// are still alive (CSS Cascading 5 §6; Custom Properties §3).
+	if err := applyComputedVarStyles(doc, cssTexts, out, styles, &unitCtx, viewportWidth, handler, pw); err != nil {
+		return nil, nil, err
+	}
 
 	// Teardown: libcss node data, styles, class arrays, sheets and context.
 	for _, entry := range ctx.nodeData {
@@ -317,7 +324,7 @@ func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style
 	applyGridStyles(doc, cssTexts, viewportWidth, defaultViewportHeight, out)
 	// border-radius is invisible to libcss too (no computed getter): the
 	// same manual cascade reads it from the same author sheets.
-	applyBorderRadiusStyles(doc, cssTexts, out)
+	applyBorderRadiusStyles(doc, cssTexts, viewportWidth, out)
 
 	// The background family's manual cascade (S10): the gradient, var()
 	// and cascade-layer declarations libcss 0.9.2 discards, read from the

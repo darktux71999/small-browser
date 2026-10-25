@@ -265,6 +265,18 @@ type CustomProperties struct {
 // the same declarations from the libcss input with CaptureSheet /
 // CaptureInline, so both sides see identical side tables.
 func NewCustomProperties(doc NodeIndex, sheets []string) *CustomProperties {
+	return newCustomProperties(doc, sheets, nil)
+}
+
+// NewCustomPropertiesAtViewport resolves custom-property declarations using
+// the same captured-media matcher as the manual application passes. The
+// viewport-filtered form is used by Compute; the unfiltered constructor stays
+// available to the resolver's standalone tests and inspection callers.
+func NewCustomPropertiesAtViewport(doc NodeIndex, sheets []string, viewportWidth float64) *CustomProperties {
+	return newCustomProperties(doc, sheets, &viewportWidth)
+}
+
+func newCustomProperties(doc NodeIndex, sheets []string, viewportWidth *float64) *CustomProperties {
 	cp := &CustomProperties{
 		doc:  doc,
 		own:  map[int]map[string]string{},
@@ -322,6 +334,9 @@ func NewCustomProperties(doc NodeIndex, sheets []string) *CustomProperties {
 		if !strings.HasPrefix(decl.Property, "--") {
 			continue
 		}
+		if viewportWidth != nil && !customPropertyMediaMatches(decl.MediaList, *viewportWidth) {
+			continue
+		}
 		for _, selector := range strings.Split(decl.Selector, ",") {
 			selector = strings.TrimSpace(selector)
 			if selector == "" {
@@ -368,6 +383,35 @@ func NewCustomProperties(doc NodeIndex, sheets []string) *CustomProperties {
 		cp.own[id] = own
 	}
 	return cp
+}
+
+// customPropertyMediaMatches gates custom-property definitions for media
+// queries the engine's viewport matcher understands. An unsupported feature
+// (for example prefers-color-scheme) keeps the legacy unconditional behavior:
+// the engine has no media state for it, and dropping the declaration would
+// invalidate theme variables that its other manual passes already resolve.
+func customPropertyMediaMatches(conditions []string, viewportWidth float64) bool {
+	for _, condition := range conditions {
+		known := true
+		for _, query := range splitMediaList(condition) {
+			for _, token := range splitMediaTokens(asciiLower(strings.TrimSpace(query))) {
+				if !token.feature {
+					continue
+				}
+				if supported, _ := mediaFeatureMatches(token.text, viewportWidth, defaultViewportHeight); !supported {
+					known = false
+					break
+				}
+			}
+			if !known {
+				break
+			}
+		}
+		if known && !mediaListMatches([]string{condition}, viewportWidth) {
+			return false
+		}
+	}
+	return true
 }
 
 // Declarations returns the captured side table of the sheets this

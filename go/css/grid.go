@@ -384,7 +384,7 @@ func radiusDeclarations(body string) radiusDecls {
 // against the computed font sizes — the root element's for rem, each
 // element's own for em — and a value arriving through var() is resolved
 // per element first, then parsed by the same reader as a plain value.
-func applyBorderRadiusStyles(doc NodeIndex, sheets []string, out []Style) {
+func applyBorderRadiusStyles(doc NodeIndex, sheets []string, viewportWidth float64, out []Style) {
 	type radiusBid struct {
 		cascadeBid
 		shorthand string
@@ -492,7 +492,7 @@ func applyBorderRadiusStyles(doc NodeIndex, sheets []string, out []Style) {
 			return value, true
 		}
 		if cp == nil {
-			cp = NewCustomProperties(doc, sheets)
+			cp = NewCustomPropertiesAtViewport(doc, sheets, viewportWidth)
 		}
 		return cp.Resolve(id, value)
 	}

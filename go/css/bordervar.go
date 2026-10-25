@@ -157,7 +157,7 @@ func borderVarWeaker(a, b cascadeBid) bool {
 func applyBorderVarStyles(doc NodeIndex, sheets []string, out []Style,
 	unitCtx *C.css_unit_ctx, viewportWidth float64,
 	handler *C.css_select_handler, pw unsafe.Pointer) error {
-	cp := NewCustomProperties(doc, sheets)
+	cp := NewCustomPropertiesAtViewport(doc, sheets, viewportWidth)
 	groups := collectBorderVarBids(doc, cp)
 	if len(groups) == 0 {
 		return nil

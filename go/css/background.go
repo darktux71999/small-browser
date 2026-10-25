@@ -413,7 +413,7 @@ type elementBgBids struct {
 // the grid pass uses; the height stays libcss' 600px default), the
 // conditions of nested @media blocks as a conjunction.
 func applyBackgroundStyles(doc NodeIndex, sheets []string, viewportWidth float64, out []Style) {
-	cp := NewCustomProperties(doc, sheets)
+	cp := NewCustomPropertiesAtViewport(doc, sheets, viewportWidth)
 
 	// The gate: only documents whose sheets or style="" attributes hold a
 	// captured (removed) background declaration — a gradient or a var()

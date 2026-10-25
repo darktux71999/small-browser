@@ -656,3 +656,25 @@ sería bug de anchura de caja y se corrige ahí.
   (preexistente — el logo de POWERED BY cae aquí), y `url()` de fondo en
   `style=` inline no resuelve (preexistente). Siguiente frente de layout.
   `Risk: item 6` (aceptación visual — ventana del padre).
+- **L33** (2026-10-25): **`var()` ampliado a todas las familias mapeadas**
+  (P17, gpt-6-luna — sonda de código). `go/css/computedvar.go`: pass de replay
+  por elemento — los valores resueltos por `var()` pasan por el **parser y la
+  expansión de shorthands del propio libcss** (reutilización sobre
+  reimplementación) y se copian solo los slots mapeados vía `mapStyle`; la
+  puja conserva importancia/capa/inline/especificidad/orden. Familias cubiertas:
+  color, fuente (family/size/weight/style/line-height), margin/padding
+  físicos, width/height/max-width, gap×3, text-align. Además: **resolución de
+  custom properties consciente del viewport** (S2) — su RED destapó que las
+  definidas en `@media` se resolvían mal a 800/400px; bordervar/background/
+  grid heredan el filtro. **Histograma vivo** (evidencia del alcance): 1.350
+  declaraciones `var()` en 58 propiedades en la home de Codeberg (color 373,
+  background 227, border-color 131, font-weight 72, border-radius 84…); fuera
+  de alcance con razón documentada: opacity, min/max-height, min-width (carrier
+  de row-gap), propiedades lógicas, outline, fill/stroke, box-shadow, filters,
+  transforms, tab-size. Limitación S2 enlazada: `prefers-color-scheme` sin
+  estado en el motor → sigue en la ruta legacy sin filtrar. Tests: 4 grupos
+  familia (RED→GREEN + un RED adicional del bug de media); css 82 top-level.
+  **Reconciliación del corpus** (el frame del prompt estaba mezclado): base
+  HEAD vs candidato = **79/79 idénticos** — cero flips atribuibles. `Risk:
+  item 6` (aceptación visual — el body color y el stack `--fonts-regular` ya
+  resuelven por var() en vivo).
