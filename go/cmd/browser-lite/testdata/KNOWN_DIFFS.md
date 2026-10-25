@@ -163,3 +163,12 @@ The Go engine resolves `rem`/`em` in `border-radius` (Forgejo's
 `.28571429rem` resolves to 4.57px at the 16px root); the frozen oracle
 degrades non-px radius units to zero. `radius-rem-em.html` diverges by
 design. See odd/tasks/var-custom-properties.md.
+
+## Category: absolute positioning (meta1 front)
+
+The Go engine removes `position:absolute` boxes from block/flex/grid flow and
+resolves their insets against the nearest positioned ancestor (CSS 2.1 §§9.3.1,
+10.1, 10.3.7, 10.6.4); the frozen Rust oracle still treats them as ordinary
+flow boxes. The focused `abs-position.html` fixture therefore differs by design.
+Flex/grid static positions, positioned auto margins, and z-index stacking are
+documented approximations or are not modeled.

@@ -94,6 +94,11 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 			height = max(*style.Height, 0)
 		}
 		st.out.Boxes[boxIndex].H = height
+		if style.PositionRelative || style.PositionAbsolute {
+			st.recordContainingBlock(id, style)
+		}
+		st.layoutAbsoluteChildren(doc, styles, id,
+			st.absoluteChildrenForContext(doc, styles, id, content.x, content.y, nil))
 		return height + style.Margin[0] + style.Margin[2]
 	}
 
@@ -258,6 +263,7 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 	// 5. The items are laid out for real, stretched to fill their cell
 	// (src/layout.rs:1074-1135).
 	var contentHeight float64
+	runStarts := make(map[dom.NodeID]int, len(items))
 	for i := range items {
 		item := &items[i]
 		fw := max(item.w+item.style.Padding[3]+item.style.Padding[1], 0)
@@ -284,6 +290,7 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 			st.flushText(&item.style, item.x, item.y, max(item.w, 1), &run)
 			bottom = item.y + item.h
 		} else {
+			runStarts[item.node] = len(st.out.Runs)
 			// The R3-4 lesson lives here: the item is laid out at its
 			// allotted width through forced (honoured by content_box),
 			// never at the parent's available width.
@@ -299,6 +306,11 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 		borderH = max(borderH, *style.Height)
 	}
 	st.out.Boxes[boxIndex].H = max(borderH, 0)
+	if style.PositionRelative || style.PositionAbsolute {
+		st.recordContainingBlock(id, style)
+	}
+	st.layoutAbsoluteChildren(doc, styles, id,
+		st.absoluteChildrenForContext(doc, styles, id, content.x, content.y, runStarts))
 
 	return borderH + style.Margin[0] + style.Margin[2]
 }
@@ -334,7 +346,7 @@ func collectGridItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []gr
 
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
-		if childStyle.Display == css.DisplayNone {
+		if childStyle.Display == css.DisplayNone || childStyle.PositionAbsolute {
 			continue
 		}
 		if doc.Nodes[child].IsText {

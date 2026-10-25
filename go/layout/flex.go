@@ -115,6 +115,11 @@ func (st *state) layoutFlexContainer(doc *dom.Document, styles []css.Style, id d
 			height = max(*style.Height, 0)
 		}
 		st.out.Boxes[boxIndex].H = height
+		if style.PositionRelative || style.PositionAbsolute {
+			st.recordContainingBlock(id, style)
+		}
+		st.layoutAbsoluteChildren(doc, styles, id,
+			st.absoluteChildrenForContext(doc, styles, id, content.x, content.y, nil))
 		return height + style.Margin[0] + style.Margin[2]
 	}
 
@@ -273,6 +278,7 @@ func (st *state) layoutFlexContainer(doc *dom.Document, styles []css.Style, id d
 
 	// 8. The items are laid out for real (src/layout.rs:580-654).
 	var contentHeight float64
+	runStarts := make(map[dom.NodeID]int, len(items))
 	if row {
 		for _, c := range lineCross {
 			contentHeight += c
@@ -310,6 +316,7 @@ func (st *state) layoutFlexContainer(doc *dom.Document, styles []css.Style, id d
 			st.flushText(&item.style, item.x, item.y, max(item.main, 1), &run)
 			bottom = item.y + item.cross
 		} else {
+			runStarts[item.node] = len(st.out.Runs)
 			// The R3-4 lesson lives here: the item is laid out at its
 			// allotted width through forced (honoured by content_box),
 			// never at the parent's available width.
@@ -325,6 +332,11 @@ func (st *state) layoutFlexContainer(doc *dom.Document, styles []css.Style, id d
 		borderH = max(borderH, *style.Height)
 	}
 	st.out.Boxes[boxIndex].H = max(borderH, 0)
+	if style.PositionRelative || style.PositionAbsolute {
+		st.recordContainingBlock(id, style)
+	}
+	st.layoutAbsoluteChildren(doc, styles, id,
+		st.absoluteChildrenForContext(doc, styles, id, content.x, content.y, runStarts))
 
 	return borderH + style.Margin[0] + style.Margin[2]
 }
@@ -361,7 +373,7 @@ func collectFlexItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []fl
 
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
-		if childStyle.Display == css.DisplayNone {
+		if childStyle.Display == css.DisplayNone || childStyle.PositionAbsolute {
 			continue
 		}
 		if doc.Nodes[child].IsText {
@@ -632,7 +644,7 @@ func maxContentWidth(doc *dom.Document, styles []css.Style, id dom.NodeID, st *s
 	var text strings.Builder
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
-		if childStyle.Display == css.DisplayNone {
+		if childStyle.Display == css.DisplayNone || childStyle.PositionAbsolute {
 			continue
 		}
 		if isImage(doc, child) {
@@ -673,7 +685,7 @@ func maxContentWidthRowFlex(style *css.Style, doc *dom.Document, styles []css.St
 	}
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
-		if childStyle.Display == css.DisplayNone {
+		if childStyle.Display == css.DisplayNone || childStyle.PositionAbsolute {
 			continue
 		}
 		if isImage(doc, child) {

@@ -61,6 +61,7 @@ const (
 	cssMarginAuto = uint8(0x02)
 
 	cssPositionRelative = uint8(0x02)
+	cssPositionAbsolute = uint8(0x03)
 	cssDirectionRTL     = uint8(0x02)
 	cssBoxSizingBorder  = uint8(0x02)
 	cssPaddingSet       = uint8(0x01)

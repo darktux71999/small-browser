@@ -582,3 +582,36 @@ sería bug de anchura de caja y se corrige ahí.
   predice banda 7 → ~11% y la card 437→~370 hacia los ~325 de Firefox. Nota de
   método: la simulación cortando/pegando rects en PNG predice el movimiento de
   bandas antes de implementar. `Risk: none` (investigación sin ediciones).
+- **L29** (2026-10-25): **`position:absolute` mínimo implementado** (P14,
+  gpt-6-luna — 2ª prueba del perfil). Fuera de flujo (bloque/flex/grid) contra
+  el padding-box del ancestro posicional más cercano (§10.1), resolución de
+  insets con stretch/sobre-restricción (§10.3.7/§10.6.4), fallback de posición
+  estática, pintado en orden de árbol (sin z-index, aproximación documentada);
+  % de insets diferidos hasta conocer el eje del bloque contenedor. 9 tests
+  (10 escenarios) + fixture `abs-position.html`; css 78 + layout 58 top-level;
+  módulo verde; base-vs-cambio 78/79 (solo el fixture nuevo difiere, esperado).
+  **Geometría local vs Firefox — mejora real**: card `[25,528,950,437]` →
+  `[25,487,950,334]` (FF ~325) y la píldora ahora es **píldora real de 241px**
+  (FF ~240) superpuesta, no una columna slab (el defecto TOP-1 del QA visual
+  eliminado). Altura de página 1967→**1823** (brecha vs FF 298→**154px**).
+  **Interpretación del padre sobre las bandas** (el worker lo pedía): el «empeoramiento»
+  6:19.76→28.84 / 7:18.24→32.42 es **re-binning + desplazamiento de contenido**
+  (la página encoge 144px → la rejilla de 24 bandas cambia de límites; todo lo
+  inferior al card sube 103px contra una referencia congelada que lleva banner
+  JS de más); el escaneo de fase [300,1600) da **best_d=0, 13.31%** — el
+  desajuste es elemento a elemento, no deriva rígida. La marca 8/8 de la S7
+  corresponde al snapshot P13; la geometría nueva necesita la medición completa
+  siguiente (M5) con la referencia contextualizada. `Risk: item 6` (aceptación
+  visual humana — la ventana la abre el padre).
+- **L30** (2026-10-25): **QA visual P15** (nemotron-3.5-super-vl — 1ª prueba del
+  perfil VL, solo lectura sobre snapshot HEAD 6aec22b = estado PRE-P14).
+  Checklist: (a) montañas una vez ancladas ✓, (b) nav #2185D0 horizontal ✓,
+  (c) card teal ✓, (d) bordes/esquinas ✓ parcial, (e) card 950px no observable
+  en su viewport (reportado honestamente), (f) soporte 2 columnas ✓ pero la
+  píldora slab (estado pre-P14). **TOP-5 por ojo**: 1) píldora slab (→ P14 lo
+  arregla), 2) logo Forgejo ausente en POWERED BY, 3) botones sin sus iconos
+  (person/euro/work), 4) logo del footer + columnas desalineadas, 5) iconos del
+  héroe + «Forgejo» sin estilo de enlace. **Señal Pareto: 4 de 5 = la misma
+  raíz — falta soporte SVG** (los 4 logos saltados + iconos inline). El QA
+  corrobora además el parámetro «verificar primero, afirmar después» (su única
+  duda la marcó como NO OBSERVABLE en vez de inventarla).

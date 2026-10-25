@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>absolute positioning</title>
+<style>
+html, body { margin: 0; }
+#card {
+  box-sizing: border-box;
+  display: flex;
+  position: relative;
+  width: 300px;
+  padding: 16px;
+  font-size: 16px;
+}
+#card > .item {
+  display: block;
+  flex: 0 0 80px;
+  height: 24px;
+}
+#register {
+  box-sizing: border-box;
+  display: block;
+  position: absolute;
+  top: -3em;
+  left: -2em;
+  right: -2em;
+  white-space: nowrap;
+  background: #ffe000;
+}
+</style>
+</head>
+<body>
+<div id="card">
+  <span class="item">one</span>
+  <span class="item">two</span>
+  <span class="item">three</span>
+  <div id="register">Register your account</div>
+</div>
+</body>
+</html>

@@ -150,6 +150,20 @@ func lengthPx(style *C.css_computed_style, unitCtx *C.css_unit_ctx, get lengthGe
 	return fixedToF64(C.css_unit_len2css_px(style, unitCtx, length, C.css_unit(unit))), true
 }
 
+// positionInset keeps percentage insets as percentages and converts em/rem
+// and other absolute units through libcss' shared CSS-pixel helper.
+func positionInset(style *C.css_computed_style, unitCtx *C.css_unit_ctx, get lengthGetter) *PositionInset {
+	var length C.css_fixed
+	var unit C.css_unit
+	if get(style, &length, &unit) != C.uint8_t(cssInsetSet) {
+		return nil
+	}
+	if uint32(unit) == cssUnitPct {
+		return &PositionInset{Percent: true, Value: fixedToF64(length)}
+	}
+	return &PositionInset{Value: fixedToF64(C.css_unit_len2css_px(style, unitCtx, length, unit))}
+}
+
 // backgroundPosition maps one computed background-position axis (CSS 2.1
 // §8.14.1): a percentage unit keeps the percentage number — the form the
 // left/center/right and top/center/bottom keywords compute to — and an
@@ -433,7 +447,9 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 		out.Display = DisplayBlock
 		out.Grid = &GridStyle{}
 	}
-	out.PositionRelative = uint8(C.css_computed_position(style)) == cssPositionRelative
+	position := uint8(C.css_computed_position(style))
+	out.PositionRelative = position == cssPositionRelative
+	out.PositionAbsolute = position == cssPositionAbsolute
 	out.DirectionRTL = uint8(C.css_computed_direction(style)) == cssDirectionRTL
 	if out.PositionRelative {
 		if value, ok := lengthPx(style, unitCtx, getTop, cssInsetSet); ok {
@@ -448,6 +464,12 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 		if value, ok := lengthPx(style, unitCtx, getLeft, cssInsetSet); ok {
 			out.RelativeLeft = &value
 		}
+	}
+	if out.PositionAbsolute {
+		out.AbsoluteTop = positionInset(style, unitCtx, getTop)
+		out.AbsoluteRight = positionInset(style, unitCtx, getRight)
+		out.AbsoluteBottom = positionInset(style, unitCtx, getBottom)
+		out.AbsoluteLeft = positionInset(style, unitCtx, getLeft)
 	}
 	out.GridItem = GridItemProps{ColSpan: 1, RowSpan: 1}
 	// Row gap travels in the min-width carrier for every element, not just

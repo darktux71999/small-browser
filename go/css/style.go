@@ -259,6 +259,13 @@ func RadiusPx(px float64) Radius { return Radius{Value: px} }
 // RadiusPercent builds a percentage corner radius.
 func RadiusPercent(pct float64) Radius { return Radius{Percent: true, Value: pct} }
 
+// PositionInset is a computed absolute-position inset (CSS 2.1 §10.3.7 and
+// §10.6.4): a percentage remains relative to the containing block's axis.
+type PositionInset struct {
+	Percent bool
+	Value   float64
+}
+
 // Style mirrors css.rs::Style: the per-node computed style of the minimal
 // engine. The CSS layer populates everything libcss computes plus the
 // manual cascades for grid tracks and border radii; fields that later
@@ -283,11 +290,19 @@ type Style struct {
 	// Relative positioning (CSS 2.1 §9.4.3). Insets are CSS pixels; nil is
 	// auto/unresolved. Layout applies these after normal flow placement.
 	PositionRelative bool
+	// PositionAbsolute removes the box from normal flow (CSS 2.1 §9.3.1).
+	PositionAbsolute bool
 	DirectionRTL     bool
 	RelativeTop      *float64
 	RelativeRight    *float64
 	RelativeBottom   *float64
 	RelativeLeft     *float64
+	// AbsoluteInsets retain percentages until layout knows the containing
+	// block; nil means auto/unresolved.
+	AbsoluteTop    *PositionInset
+	AbsoluteRight  *PositionInset
+	AbsoluteBottom *PositionInset
+	AbsoluteLeft   *PositionInset
 	// Borders (T11): per-side widths in CSS pixels; styles (only solid
 	// paints today); colours; corner radii as specified. A used width of
 	// zero is reported where the style is none: no border paints even

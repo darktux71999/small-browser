@@ -97,9 +97,10 @@ type forced struct {
 
 // state threads the shaper, the images and the output through the flow.
 type state struct {
-	shaper *text.Shaper
-	images *img.ImageSet
-	out    *Layout
+	shaper          *text.Shaper
+	images          *img.ImageSet
+	out             *Layout
+	positionedBoxes map[dom.NodeID]containingBlock
 }
 
 // Render lays out doc against an empty image set: pages without <img> or
@@ -120,7 +121,7 @@ func RenderWithImages(doc *dom.Document, styles []css.Style, viewportWidth float
 		return &Layout{Width: viewportWidth, Height: 1}
 	}
 	defer shaper.Close()
-	st := &state{shaper: shaper, images: images, out: &Layout{Width: viewportWidth}}
+	st := &state{shaper: shaper, images: images, out: &Layout{Width: viewportWidth}, positionedBoxes: make(map[dom.NodeID]containingBlock)}
 	var cursor float64
 	for _, child := range doc.Nodes[doc.Root].Children {
 		cursor += st.layoutNode(doc, styles, child, 0, cursor, viewportWidth, forced{})
@@ -204,6 +205,9 @@ func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID
 		used = res.borderBottom - res.borderTop + res.top + res.bottom
 	}
 	st.applyRelativePosition(style, boxStart, runStart)
+	if style.PositionRelative || style.PositionAbsolute {
+		st.recordContainingBlock(id, style)
+	}
 	return used
 }
 
@@ -245,6 +249,13 @@ func (st *state) applyRelativePosition(style *css.Style, boxStart, runStart int)
 		st.out.Runs[i].X += dx
 		st.out.Runs[i].Y += dy
 	}
+	for i := boxStart; i < len(st.out.Boxes); i++ {
+		if cb, ok := st.positionedBoxes[st.out.Boxes[i].Node]; ok {
+			cb.x += dx
+			cb.y += dy
+			st.positionedBoxes[st.out.Boxes[i].Node] = cb
+		}
+	}
 }
 
 // firstCollapseTop finds the first in-flow block-level participant under id
@@ -259,7 +270,7 @@ func firstCollapseTop(doc *dom.Document, styles []css.Style, id dom.NodeID) (top
 	var run strings.Builder
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
-		if childStyle.Display == css.DisplayNone || isNoscript(doc, child) {
+		if childStyle.Display == css.DisplayNone || childStyle.PositionAbsolute || isNoscript(doc, child) {
 			continue
 		}
 		if isImage(doc, child) {
@@ -289,7 +300,7 @@ func lastCollapseBottom(doc *dom.Document, styles []css.Style, id dom.NodeID) (b
 	for i := len(children) - 1; i >= 0; i-- {
 		child := children[i]
 		childStyle := &styles[child]
-		if childStyle.Display == css.DisplayNone || isNoscript(doc, child) {
+		if childStyle.Display == css.DisplayNone || childStyle.PositionAbsolute || isNoscript(doc, child) {
 			continue
 		}
 		if isImage(doc, child) {
@@ -440,6 +451,7 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 	var pending float64
 	hasPending := false
 	seenFirst := false
+	var absoluteChildren []absoluteChild
 	place := func(childTop float64) float64 {
 		textH := st.flushText(style, contentX, cursor, contentW, &run)
 		var at float64
@@ -466,6 +478,15 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 		childStyle := &styles[child]
 		switch {
 		case childStyle.Display == css.DisplayNone || isNoscript(doc, child):
+		case childStyle.PositionAbsolute:
+			// CSS 2.1 §9.3.1: reserve the tree-order insertion point, but
+			// leave both the sibling cursor and pending margins untouched.
+			// The current cursor is the block static-position approximation
+			// of CSS 2.1 §10.3.7; full inline static-position calculation is
+			// deliberately outside this minimal implementation.
+			absoluteChildren = append(absoluteChildren, absoluteChild{
+				id: child, x: contentX, y: cursor, runIndex: len(st.out.Runs),
+			})
 		case isImage(doc, child):
 			// A replaced element takes its own line in this block flow,
 			// so the text collected so far is flushed above it.
@@ -521,6 +542,10 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 		borderH = max(borderH, *f.height)
 	}
 	st.out.Boxes[boxIndex].H = max(borderH, 0)
+	if style.PositionRelative || style.PositionAbsolute {
+		st.recordContainingBlock(id, style)
+	}
+	st.layoutAbsoluteChildren(doc, styles, id, absoluteChildren)
 
 	return blockResult{borderTop: borderY, borderBottom: borderY + max(borderH, 0), top: top, bottom: bottom}
 }
