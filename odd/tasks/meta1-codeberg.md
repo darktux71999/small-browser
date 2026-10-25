@@ -515,3 +515,14 @@ sería bug de anchura de caja y se corrige ahí.
   stop de gradiente descartadas, gradientes no verticales/≠2 stops inertes,
   bids de grid/radius sin layer rank. `Risk: none` (todo pinneado; aceptación
   visual confirmada por el padre con sondas independientes).
+- **L25** (2026-10-25): **Corpus extendido con fixtures de features** (P11b,
+  gemini-3.1-flash-lite — sonda de perfil alto volumen/baja exigencia): 7
+  fixtures nuevos autocontenidos en `test/data/` (var-border, radius-rem-em,
+  noscript-policy, margin-collapse, nowrap-button, grid-place-self,
+  background-position) — el corpus de 71 no ejercitaba NINGUNA feature de esta
+  semana. Los 7 DIFF contra el oráculo como era de esperar (features Go-only).
+  **Pendiente del padre** (diferido por carrera con P11, que anexa en el mismo
+  fichero): KNOWN_DIFFS.md carece de las categorías `var()/custom properties` y
+  `rem/em radius` — la cobertura reportada por el worker era optimista
+  (mapeaba radius-rem-em a line-height/painting). Se extienden en la integración
+  de P11.

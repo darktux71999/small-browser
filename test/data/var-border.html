@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<style>
+  :root { --c: blue; }
+  .box { 
+    border: 1px solid var(--c); 
+    padding: 10px;
+    margin: 10px;
+  }
+  .fallback { border: 1px solid var(--missing, red); }
+  .unresolvable { border: 1px solid var(--missing); }
+</style>
+<div class="box">Inherited Var (Blue)</div>
+<div class="fallback">Fallback Var (Red)</div>
+<div class="unresolvable">Unresolvable (None/Transparent)</div>
+</html>
