@@ -257,6 +257,23 @@ func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style
 		out[id] = mapStyle(style, &unitCtx, isRootElement(doc, id))
 	}
 
+	// The author sheet texts, as collected: the manual passes below read
+	// the properties libcss does not compute from the same text.
+	cssTexts := make([]string, len(sheets))
+	for i, input := range sheets {
+		cssTexts[i] = input.CSS
+	}
+
+	// var() borders (T2/S3): the rewriter stored the declarations libcss
+	// 0.9.2 discards in a side table. The border family resolves per
+	// element and replays through libcss' own select — the same border
+	// expansion and the same css_media @media match the non-var path uses
+	// (see bordervar.go). This runs while the node data, the handler and
+	// the unit context are still alive.
+	if err := applyBorderVarStyles(doc, cssTexts, out, &unitCtx, viewportWidth, handler, pw); err != nil {
+		return nil, nil, err
+	}
+
 	// Teardown: libcss node data, styles, class arrays, sheets and context.
 	for _, entry := range ctx.nodeData {
 		C.css_libcss_node_data_handler(handler, C.CSS_NODE_DELETED, unsafe.Pointer(pw),
@@ -273,10 +290,6 @@ func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style
 
 	// Grid placement properties are invisible to libcss: they are read from
 	// the same author sheets here, after the cascade above fixed display.
-	cssTexts := make([]string, len(sheets))
-	for i, input := range sheets {
-		cssTexts[i] = input.CSS
-	}
 	applyGridStyles(doc, cssTexts, out)
 	// border-radius is invisible to libcss too (no computed getter): the
 	// same manual cascade reads it from the same author sheets.

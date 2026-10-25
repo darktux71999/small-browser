@@ -28,7 +28,7 @@ oráculo — divergencia intencionada documentada). Rama `feat/go-engine`; runne
 | T | Descripción | Spec | Ruta | Estado |
 |---|---|---|---|---|
 | T1 | Captura en el rewriter + resolutor (herencia + var()) | S1,S2 | delegado (mimo-v2.6-flash) | ✅ (63 PASS go/css; smoke `border: 1px solid var(--c)` → `1px solid red`) |
-| T2 | Aplicación vía cascada manual + bordes de codeberg | S3 | delegado (qwen3.8-flash) | pendiente |
+| T2 | Aplicación vía cascada manual + bordes de codeberg | S3 | delegado (qwen3.8-flash) | ✅ (73 PASS; corpus 62/71 sin cambios; live 1000x3175; borde pintado a píxel) |
 | T3 | rem/em en radios | S4 | pendiente | pendiente |
 
 ## Log
@@ -54,3 +54,28 @@ oráculo — divergencia intencionada documentada). Rama `feat/go-engine`; runne
   aplique los bordes var(), el Go divergirá A PROPÓSITO de la medición en vivo
   del oráculo (que descarta var() para siempre) — la paridad S7 se mide en la
   base sin var(); el corpus no cambia. `Risk: none`.
+- **L3** (2026-10-24): **T2 entregado** (qwen3.8-flash, CERO rondas de
+  corrección). `go/css/bordervar.go`: cada declaración border con `var()` se
+  resuelve por elemento (`cp.Resolve`), se puja con el `cascadeBid` existente
+  ordenado por (important, inline, especificidad, order) y se **reproduce a
+  través del propio select de libcss** — una regla por bid, envuelta en la
+  condición `@media` capturada, con una sonda `color:#dead00` que delata el
+  veredicto de match de selector/media (libcss 0.9.2 no expone `css_query`, es
+  la única vía sin reimplementar media). La expansión de shorthands queda
+  single-sourced en libcss; `readComputedBorders` extraído de `mapStyle` se
+  comparte por ambos caminos con máscaras por slot. No-resolubles → drop antes
+  del bid (hermano válido gana). **Aceptación S3**: corpus **62/71 sin cambios**
+  (los mismos 9 JS de KNOWN_DIFFS.md); live `wrote ... (1000x3175)` (+2px: los
+  bordes ya ocupan espacio — divergencia intencional del oráculo congelado,
+  3173); **prueba a píxel**: p(500,413) GO `srgb(205,227,226)` vs RUST blanco.
+  73 PASS en go/css (63 previas intactas); módulo 10/10; vet/gofmt limpios.
+  Límites documentados en bordervar.go: propiedades no-border con var() quedan
+  capturadas sin aplicar (futura fase, `borderVarScope` es el punto de
+  ampliación); overwrite de slots sin interleaving de orígenes (mismo modelo
+  que grid/radius); drops conservadores si QuerySelectorAll acepta un selector
+  que libcss rechaza o un `@media` anidado no parsea en mq3. `Risk: none`
+  (ningún ítem 1-6: la extracción de mapStyle es internal, requested y
+  behavior-pinned). **Proceso**: assess nativo sobre el diff del writer =
+  `high_risk` / review_due → review nativo abierto para esta candidata (RDD
+  default-on); commits previos de feat/go-engine sin assess (lapse del padre,
+  registrado aquí).

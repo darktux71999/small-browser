@@ -161,6 +161,65 @@ func borderWidthPx(style *C.css_computed_style, unitCtx *C.css_unit_ctx, get len
 	}
 }
 
+// The per-side border getters, shared by mapStyle's full read and the
+// var() border pass's masked read (bordervar.go): one place where libcss'
+// computed borders become Style fields.
+var (
+	borderWidthGetters = [4]lengthGetter{getBorderTopWidth, getBorderRightWidth, getBorderBottomWidth, getBorderLeftWidth}
+	borderColorGetters = [4]colorGetter{getBorderTopColor, getBorderRightColor, getBorderBottomColor, getBorderLeftColor}
+	borderStyleGetters = [4]styleGetter{getBorderTopStyle, getBorderRightStyle, getBorderBottomStyle, getBorderLeftStyle}
+)
+
+// allBorderSides masks every side of every border slot.
+var allBorderSides = [4]bool{true, true, true, true}
+
+// readComputedBorders copies the border values of one libcss computed
+// style into dst, overwriting only the slots the three masks select.
+// textColor answers the currentColor status exactly like mapStyle's
+// out.Color did at that point (the inherited value — css_computed_color
+// runs below it). This is the single reader of the libcss border
+// expansion: the var() pass replays resolved border declarations through
+// libcss' own select and lands here, so the shorthand expansion, the
+// per-side mapping and the keyword widths never live twice.
+func readComputedBorders(style *C.css_computed_style, unitCtx *C.css_unit_ctx, textColor Color,
+	widths, styles, colors [4]bool, dst *Style) {
+	for i, get := range borderWidthGetters {
+		if widths[i] {
+			dst.BorderWidth[i] = borderWidthPx(style, unitCtx, get)
+		}
+	}
+	for i, get := range borderColorGetters {
+		if !colors[i] {
+			continue
+		}
+		var color C.css_color
+		switch uint8(get(style, &color)) {
+		case cssBorderColorColor:
+			dst.BorderColor[i] = rgba(color)
+		case cssBorderColorCurrentColor:
+			// The current-oracle quirk: in mapStyle, textColor is still
+			// the inherited value at this point (css_computed_color runs
+			// below).
+			dst.BorderColor[i] = textColor
+		default:
+			// Anything else unresolved: the text colour.
+			dst.BorderColor[i] = textColor
+		}
+	}
+	for i, get := range borderStyleGetters {
+		if !styles[i] {
+			continue
+		}
+		switch uint8(get(style)) {
+		case cssBorderStyleNone, cssBorderStyleHidden:
+			dst.BorderStyle[i] = BorderNone
+		default:
+			// dashed/dotted/double/... degrade to solid (see BorderKind).
+			dst.BorderStyle[i] = BorderSolid
+		}
+	}
+}
+
 // rgba converts a libcss css_color (AARRGGBB) into the engine's Color.
 func rgba(c C.css_color) Color {
 	return Color{
@@ -390,36 +449,13 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 	// shorthands, longhands, currentColor and CSS-wide keywords all follow
 	// its computed values -- nothing is re-parsed here. border-radius has
 	// no computed getter in libcss 0.9.2; it is read from the author sheets
-	// by applyBorderRadiusStyles after the cascade.
-	borderWidths := [4]lengthGetter{getBorderTopWidth, getBorderRightWidth, getBorderBottomWidth, getBorderLeftWidth}
-	for i, get := range borderWidths {
-		out.BorderWidth[i] = borderWidthPx(style, unitCtx, get)
-	}
-	borderColors := [4]colorGetter{getBorderTopColor, getBorderRightColor, getBorderBottomColor, getBorderLeftColor}
-	for i, get := range borderColors {
-		var color C.css_color
-		switch uint8(get(style, &color)) {
-		case cssBorderColorColor:
-			out.BorderColor[i] = rgba(color)
-		case cssBorderColorCurrentColor:
-			// The current-oracle quirk: `out.color` is still the inherited
-			// value at this point (css_computed_color runs below).
-			out.BorderColor[i] = out.Color
-		default:
-			// Anything else unresolved: the text colour.
-			out.BorderColor[i] = out.Color
-		}
-	}
-	borderStyles := [4]styleGetter{getBorderTopStyle, getBorderRightStyle, getBorderBottomStyle, getBorderLeftStyle}
-	for i, get := range borderStyles {
-		switch uint8(get(style)) {
-		case cssBorderStyleNone, cssBorderStyleHidden:
-			out.BorderStyle[i] = BorderNone
-		default:
-			// dashed/dotted/double/... degrade to solid (see BorderKind).
-			out.BorderStyle[i] = BorderSolid
-		}
-	}
+	// by applyBorderRadiusStyles after the cascade. The same reader serves
+	// the var() border replay (bordervar.go): the expansion lives once.
+	//
+	// The currentColor branch reads out.Color before css_computed_color
+	// below has run: it still carries the inherited value, exactly like the
+	// oracle (readComputedBorders keeps that quirk).
+	readComputedBorders(style, unitCtx, out.Color, allBorderSides, allBorderSides, allBorderSides, &out)
 	// A used width of zero where no border paints: like browsers, `none`
 	// takes no space even when libcss reports its medium initial width.
 	for i := 0; i < 4; i++ {
