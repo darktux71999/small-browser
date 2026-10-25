@@ -43,6 +43,7 @@ import "C"
 import (
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"unsafe"
 
 	"browser-lite/layout"
@@ -265,6 +266,14 @@ func windowError(what string) *RunError {
 // PageUp/PageDown, Home/End, vi j/k/g/G) re-paint the window further down
 // through ScrollState. --png/--dump never reach this path.
 func Run(l *layout.Layout, title string, maxFrames *uint32) error {
+	// SDL3 requires every video/event call on ONE OS thread. Lock this
+	// goroutine to its thread first: without this, Go migrates the loop
+	// across threads at scheduling points (every blocking cgo call such as
+	// SDL_Delay is one), which in the wild lost keyboard events (Xlib is
+	// not thread-safe) and issued GL calls with no current context —
+	// surfacing as window-move smearing and Mesa "glBindTexture/
+	// glPixelStorei/glTexSubImage2D called without a rendering context".
+	runtime.LockOSThread()
 	scroll := New(l.Height, float64(ViewportHeight))
 	offset := scroll.Offset()
 	frame, err := paint.Render(l, &offset)
@@ -279,33 +288,46 @@ func Run(l *layout.Layout, title string, maxFrames *uint32) error {
 	if C.shell_init() == 0 {
 		return windowError("SDL_Init")
 	}
-	// Every SDL exit below must quit the video subsystem it initialized.
-	quit := func(err error) error {
-		C.shell_quit()
-		return err
-	}
 
 	ctitle := C.CString(title)
 	defer C.free(unsafe.Pointer(ctitle))
 	window := C.SDL_CreateWindow(ctitle, C.int(ViewportWidth), C.int(ViewportHeight), 0)
 	if window == nil {
-		return quit(windowError("SDL_CreateWindow"))
+		C.shell_quit()
+		return windowError("SDL_CreateWindow")
 	}
-	defer C.SDL_DestroyWindow(window)
 
 	renderer := C.SDL_CreateRenderer(window, nil)
 	if renderer == nil {
-		return quit(windowError("SDL_CreateRenderer"))
+		err := windowError("SDL_CreateRenderer")
+		C.SDL_DestroyWindow(window)
+		C.shell_quit()
+		return err
 	}
-	defer C.SDL_DestroyRenderer(renderer)
 
 	texture := C.SDL_CreateTexture(renderer,
 		C.SDL_PIXELFORMAT_ARGB8888, C.SDL_TEXTUREACCESS_STREAMING,
 		C.int(ViewportWidth), C.int(ViewportHeight))
 	if texture == nil {
-		return quit(windowError("SDL_CreateTexture"))
+		err := windowError("SDL_CreateTexture")
+		C.SDL_DestroyRenderer(renderer)
+		C.SDL_DestroyWindow(window)
+		C.shell_quit()
+		return err
 	}
-	defer C.SDL_DestroyTexture(texture)
+	// Ordered teardown: SDL resources must be destroyed in dependency
+	// order (texture -> renderer -> window) BEFORE SDL_Quit tears down
+	// the video subsystem. Destroying them after SDL_Quit (e.g. via
+	// deferred destroys running after a quit-first helper returns) lands
+	// GL deletes with no current context — the Mesa "glDeleteTextures
+	// called without a rendering context" noise at exit. Every exit path
+	// below calls cleanup explicitly; there are no deferred SDL destroys.
+	cleanup := func() {
+		C.SDL_DestroyTexture(texture)
+		C.SDL_DestroyRenderer(renderer)
+		C.SDL_DestroyWindow(window)
+		C.shell_quit()
+	}
 
 	upload := func(f paint.Frame) error {
 		argb := toARGB(f)
@@ -318,7 +340,8 @@ func Run(l *layout.Layout, title string, maxFrames *uint32) error {
 		return nil
 	}
 	if err := upload(frame); err != nil {
-		return quit(err)
+		cleanup()
+		return err
 	}
 
 	var frames uint32
@@ -330,7 +353,8 @@ func Run(l *layout.Layout, title string, maxFrames *uint32) error {
 		for C.shell_poll(&event) != 0 {
 			switch C.shell_event_type(&event) {
 			case C.Uint32(EventQuit):
-				return quit(nil)
+				cleanup()
+				return nil
 			case C.Uint32(EventKeyDown):
 				action, ok := ActionFromKey(
 					uint32(C.shell_event_key(&event)),
@@ -348,20 +372,24 @@ func Run(l *layout.Layout, title string, maxFrames *uint32) error {
 				next := scroll.Offset()
 				nf, err := paint.Render(l, &next)
 				if err != nil {
-					return quit(PaintError(err.Error()))
+					cleanup()
+					return PaintError(err.Error())
 				}
 				frame = nf
 				if err := upload(frame); err != nil {
-					return quit(err)
+					cleanup()
+					return err
 				}
 			}
 		}
 
 		if C.shell_render_clear(renderer) == 0 {
-			return quit(windowError("SDL_RenderClear"))
+			cleanup()
+			return windowError("SDL_RenderClear")
 		}
 		if C.shell_render_texture(renderer, texture) == 0 {
-			return quit(windowError("SDL_RenderTexture"))
+			cleanup()
+			return windowError("SDL_RenderTexture")
 		}
 		C.shell_present(renderer)
 		frames++
@@ -374,7 +402,8 @@ func Run(l *layout.Layout, title string, maxFrames *uint32) error {
 		C.shell_delay(16)
 	}
 
-	return quit(nil)
+	cleanup()
+	return nil
 }
 
 // toARGB converts a straight-RGBA8 frame to the premultiplied ARGB8888 bytes

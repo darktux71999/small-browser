@@ -173,3 +173,19 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   entre fetches, no del motor — la tolerancia cero de bytes de la S7 se medirá
   con renders consecutivos o snapshot. Por delegación (muse-spark) bajo la
   instrucción del usuario de construir por partes (Pareto). `Risk: none`.
+- **L11** (2026-10-24): **fix interactivo del shell** (muse-spark) — dos bugs
+  reales reportados por el usuario: teclado sin efecto y frames superpuestos al
+  mover la ventana. Causas raíz: (1) faltaba `runtime.LockOSThread()` — SDL3
+  exige afinidad de hilo y Go migra goroutines: el pumping de X11 desde hilos
+  ajenos perdía las teclas y las llamadas GL sin contexto dejaban los frames
+  viejos superpuestos (los warnings Mesa «called without a rendering
+  context»); (2) la limpieza destruía textura/renderer/ventana con `defer`
+  DESPUÉS de `SDL_Quit` (el ruido `glDelete*`). Fixes: LockOSThread como
+  primera sentencia de `Run` + limpieza explícita ordenada (textura → renderer
+  → ventana → SDL_Quit) en todos los caminos de salida; diagnósticos
+  byte-idénticos. **Prueba interactiva real** (xdotool ausente → helper XTest
+  propio en C): `j×3` desplaza ~120px (AE=27700), `k×3` regresa pixel-idéntico
+  (AE=0), `G`→final, `g`→origen idéntico; dos `XMoveWindow` con crops AE=0
+  (sin smear); **stderr 0 bytes, cero warnings Mesa**; cierre limpio exit 0.
+  Diferencial sin cambios **62/71**. `Risk: none`. Scratch /tmp/bl-p5 retirado
+  por el padre.
