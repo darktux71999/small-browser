@@ -208,3 +208,23 @@ func TestClassMatchingIsWhitespaceSeparated(t *testing.T) {
 		t.Fatalf(".ab matched %d nodes, want 1", len(got))
 	}
 }
+
+// A boolean attribute written without a value (and with an empty value)
+// parses to an empty string, mirroring the oracle's attribute handling.
+func TestAttributeWithoutValue(t *testing.T) {
+	doc := dom.Parse(`<input disabled><button disabled="">Click</button>`)
+	in, ok := doc.QuerySelector("input")
+	if !ok {
+		t.Fatal("no input")
+	}
+	if v, _ := doc.Nodes[in].Attr("disabled"); v != "" {
+		t.Fatalf("input disabled = %q, want empty string", v)
+	}
+	bu, ok := doc.QuerySelector("button")
+	if !ok {
+		t.Fatal("no button")
+	}
+	if v, _ := doc.Nodes[bu].Attr("disabled"); v != "" {
+		t.Fatalf("button disabled = %q, want empty string", v)
+	}
+}

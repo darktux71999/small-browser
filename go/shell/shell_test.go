@@ -248,3 +248,32 @@ func TestKeyConstantsMatchSDLHeaders(t *testing.T) {
 		t.Errorf("ModShift = %#x, want 0x3", uint16(shell.ModShift))
 	}
 }
+
+// LineUp from the very top cannot move further up: it clamps at zero.
+func TestLineUpFromTopStaysAtZero(t *testing.T) {
+	scroll := shell.New(3200.0, 760.0)
+	if scroll.Offset() != 0.0 {
+		t.Fatalf("fresh offset = %v, want 0", scroll.Offset())
+	}
+	scroll.Apply(shell.LineUp)
+	if scroll.Offset() != 0.0 {
+		t.Errorf("LineUp at the top: offset = %v, want 0 (clamps at zero)", scroll.Offset())
+	}
+}
+
+// A page step is never below one pixel, even when the viewport is smaller
+// than the page-overlap allowance (viewport 50 < PageOverlap 60).
+func TestPageStepNeverBelowOnePixel(t *testing.T) {
+	scroll := shell.New(100.0, 50.0)
+	if scroll.MaxOffset() != 50.0 {
+		t.Fatalf("max offset = %v, want 50", scroll.MaxOffset())
+	}
+	scroll.Apply(shell.PageDown)
+	if scroll.Offset() != 1.0 {
+		t.Errorf("page step = %v, want 1 (floored at one pixel)", scroll.Offset())
+	}
+	scroll.Apply(shell.PageUp)
+	if scroll.Offset() != 0.0 {
+		t.Errorf("page up from 1 = %v, want 0", scroll.Offset())
+	}
+}

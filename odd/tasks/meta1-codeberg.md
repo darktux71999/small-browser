@@ -615,3 +615,17 @@ sería bug de anchura de caja y se corrige ahí.
   raíz — falta soporte SVG** (los 4 logos saltados + iconos inline). El QA
   corrobora además el parámetro «verificar primero, afirmar después» (su única
   duda la marcó como NO OBSERVABLE en vez de inventarla).
+- **L31** (2026-10-25): **Cierre de avisos P18** (nemotron-3.5-super-vl — 2ª
+  prueba, dominio no visual: ingeniería de tests). **Hallazgo del mapeo**: los
+  **22 avisos numerados R2/R3 de los reviews pertenecen al motor Rust (`src/`)
+  o a `go/css`/`go/paint`/`go/layout`** — cero accionables en `go/text`,
+  `go/shell`, `go/net`, `go/dom` (mapeo completo avisos→acción en el informe:
+  NOT-IN-SCOPE con razón concreta para cada uno). La cola de avisos queda, por
+  tanto, en manos de: briefs para el oráculo (agente externo) y las unidades
+  futuras de css/pintado/layout. En vez de rellenar, entregó **12 pins de
+  cobertura** honestamente etiquetados GREEN-on-arrival (text +7: clamps de
+  LineHeightAbsolute y proyección a unidades Pango; shell +2: clamp de LineUp
+  y piso de 1px del page-step; net +2: cuerpo == cap aceptado y BOM UTF-16BE;
+  dom +1: atributo booleano). Suites verdes en su superficie; `go test ./...`
+  con fallos PREEXISTENTES de workers en vuelo correctamente atribuidos
+  (el RED de P17 en go/css, la compilación de P16 en go/svg). `Risk: none`.

@@ -186,6 +186,24 @@ func TestFetchBytesLimitedReportsTheContentType(t *testing.T) {
 	}
 }
 
+// A body exactly at the size cap is accepted (never truncated): the cap only
+// rejects bodies larger than the limit.
+func TestFetchBytesLimitedAcceptsBodyExactlyAtTheCap(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, strings.Repeat("x", 10))
+	}))
+	defer server.Close()
+	url := server.URL + "/exact.bin"
+
+	body, _, err := FetchBytesLimited(url, 10, time.Second)
+	if err != nil {
+		t.Fatalf("a body exactly at the cap must succeed: %v", err)
+	}
+	if string(body) != strings.Repeat("x", 10) {
+		t.Fatalf("body = %q, want ten x", body)
+	}
+}
+
 func TestFetchBytesLimitedTimesOut(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
@@ -323,6 +341,8 @@ func TestDecodeBodyCharsets(t *testing.T) {
 		{"utf-16le bom", []byte{0xFF, 0xFE, 0x63, 0x00, 0x61, 0x00, 0x66, 0x00}, "text/html; charset=utf-16", "caf"},
 		// UTF-16 without a mark defaults to big endian.
 		{"utf-16be default", []byte{0x00, 0x63, 0x00, 0x61, 0x00, 0x66}, "text/html; charset=utf-16be", "caf"},
+		// UTF-16 with a big-endian byte order mark under the generic charset.
+		{"utf-16be BOM", []byte{0xFE, 0xFF, 0x00, 0x63, 0x00, 0x61, 0x00, 0x66}, "text/html; charset=utf-16", "caf"},
 		// An unknown charset falls back to UTF-8 so the page still renders.
 		{"unknown falls back", []byte("café"), "text/html; charset=x-made-up", "café"},
 		// Invalid UTF-8 never fails: the bad bytes become U+FFFD.
