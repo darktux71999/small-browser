@@ -376,3 +376,36 @@ sería bug de anchura de caja y se corrige ahí.
   Lecciones: los worktrees temporales por commit eliminan además el roce del
   untracked; el presupuesto de contexto del revisor obliga a revisar por debajo
   de ~1.500-2.000 líneas por candidato.
+- **L20** (2026-10-25): **Medición S7 con el motor Go** (qwen3.8-flash, tarea de
+  medición sin ediciones). Go (HEAD 681a35e, con bordes var(), radios rem/em y
+  fix noscript): **1000×3175** · Firefox 157 claro: **1000×1901** (reproduce
+  byte a byte la referencia histórica) · AE página entera **17.47%**.
+  **MÉTODO DE BANDAS (definición fijada aquí para que las futuras mediciones
+  sean comparables)**: 24 bandas horizontales iguales sobre la altura de
+  rejilla = max(altura motor, altura contenido referencia) → 3175/24 ≈ 132.3px
+  por banda; diff% = píxeles cambiados / área de banda con
+  `magick compare -metric AE -fuzz 25%`. La referencia Firefox es un recorte
+  `magick -fuzz 12% -trim` de una captura de viewport 1000×3600 (headless 157
+  no tiene `--full-page`); ese trim reproduce el 1901 histórico exacto. Ojo:
+  el AE por bandas no es estrictamente aditivo (~2% de efecto de rebanado) —
+  no mezclar totales de granularidades distintas.
+  **Tabla (banda: % diff)**: 0:24.94 · 1:7.28 · 2:9.06 · 3:2.53 · 4:16.27 ·
+  5:31.70 · 6:57.57 · 7:40.82 · 8:18.58 · 9:36.33 · 10:36.77 · 11:40.91 ·
+  12:37.33 · 13:6.86 · 14:4.29 · 15:15.76 · 16:9.79 · 17:8.77 · 18:16.52 ·
+  19:1.43 · 20:1.34 · 21:1.51 · 22:1.38 · 23:0.75.
+  **Delta vs la última medición (era Rust, 3173px)**: el **héroe queda
+  ARREGLADO** — bandas 3–4 bajan de 40–65% a **2.53/16.27%** (bordes var() +
+  background-image); banda 8 = **18.58%**, el mejor número de banda azul
+  jamás registrado. **Objetivo histórico (bandas 3–10 < 20%): NO cumplido** —
+  exceden 5 (31.70), 6 (57.57), 7 (40.82), 9 (36.33), 10 (36.77); pasan 3, 4, 8.
+  **Diagnóstico dominante**: ya no es decoración de cajas sino **ritmo
+  vertical** — el motor Go pone el mismo contenido 150–500px más abajo que
+  Firefox (fallback monoespaciado + line boxes más altos): el contenido idéntico
+  cae desfasado y las bandas de texto 5–12 pagan el desfase. Secundarios: los
+  4 SVG (logos), el banner ToU sin-JS donde Firefox muestra cookies, y ~1270px
+  de footer de más bajo los 1901px de Firefox (bandas 19–23 ≈ 1%, correcto).
+  **Palanca nº1 por datos**: tipografía real (fuentes del sistema — decisión
+  diferida del usuario) + alineación de line-box/leading contra Firefox.
+  Artefactos: /tmp/bl-m1 (side-by-side.png, diff-annotated.png, bands.csv,
+  COMMANDS.sh con la reproducción exacta). Deriva viva: contador de users
+  ±1 entre capturas (documentado en L15). `Risk: none` (solo medición).
