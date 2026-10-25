@@ -160,3 +160,16 @@ sus salidas casan con las del oráculo. Rama `feat/go-engine`. Test runner:
   — registrado como excepción de la S1 en
   `go/cmd/browser-lite/testdata/KNOWN_DIFFS.md` con causa y comportamiento Go.
   210 tests en 10 paquetes; vet/gofmt limpios. `Risk: none`.
+- **L10** (2026-10-24): **la medición S7 en vivo desveló una brecha real** que el
+  corpus no cubría: los `<noscript>` se parsean distinto (lexbor con scripting
+  deshabilitado → hijos reales `style`/`div`; x/net/html → texto crudo con la
+  fuente CSS). Síntomas: el CSS del ToU se pintaba como texto basura visible,
+  su `!important` no se aplicaba, y codeberg rendía **1000×3053** vs
+  **1000×3173** del oráculo (120px). Fix en `go/dom` (re-parseo de fragmento
+  con contexto del padre + gate de hijos elemento para preservar texto plano),
+  pin RED→GREEN en `noscript_test.go`. **Verificado en vivo: `LAYOUT 1000x3173`
+  = altura idéntica al oráculo.** Nota de método: los contadores vivos
+  (744371/744372) y el `Page: 4ms` del diff de dumps son deriva de contenido
+  entre fetches, no del motor — la tolerancia cero de bytes de la S7 se medirá
+  con renders consecutivos o snapshot. Por delegación (muse-spark) bajo la
+  instrucción del usuario de construir por partes (Pareto). `Risk: none`.

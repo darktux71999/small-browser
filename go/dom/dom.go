@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 // NodeID identifies a node in a Document. Ids are indexes into
@@ -97,12 +98,73 @@ func (d *Document) walk(n *html.Node, parent NodeID) {
 		// for SVG/MathML, so lowercase ASCII here. Matching stays
 		// case-insensitive (equalFoldASCII), so queries are unaffected.
 		id := d.push(asciiLower(n.Data), false, true, parent, attrs, "")
+		// Mirror the oracle's parse-time rule: lexbor parses <noscript> with
+		// the scripting flag disabled (scripting off), so its contents become
+		// real markup (src/dom.rs walk_children stores the parsed subtree).
+		// x/net/html hardcodes the scripting-enabled raw-text behavior and
+		// yields one raw-text child instead. Re-parse raw-text-only noscript
+		// contents as an HTML fragment and adopt the resulting nodes. A
+		// noscript that already has element children keeps current behavior,
+		// and plain-text contents stay one #text child (the fragment has no
+		// elements, so we fall through).
+		if asciiLower(n.Data) == "noscript" && !hasElementChild(n) {
+			if frag, ok := parseNoscriptFragment(n, d, parent); ok {
+				for _, fn := range frag {
+					d.walk(fn, id)
+				}
+				return
+			}
+		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			d.walk(c, id)
 		}
 	case html.TextNode:
 		d.push("#text", true, true, parent, nil, n.Data)
 	}
+}
+
+// hasElementChild reports whether n has at least one element child.
+func hasElementChild(n *html.Node) bool {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode {
+			return true
+		}
+	}
+	return false
+}
+
+// parseNoscriptFragment re-parses a noscript element's raw-text contents as
+// an HTML fragment, using the noscript's parent element as the fragment
+// context (body for unknown parents). It returns false when the contents
+// hold no markup, leaving the caller to keep the single #text child.
+func parseNoscriptFragment(n *html.Node, d *Document, parent NodeID) ([]*html.Node, bool) {
+	var raw strings.Builder
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.TextNode {
+			raw.WriteString(c.Data)
+		}
+	}
+	if raw.Len() == 0 {
+		return nil, false
+	}
+	ctx := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
+	if int(parent) < len(d.Nodes) {
+		if tag := d.Nodes[parent].Tag; tag != "" && tag != "#document" && tag != "#text" {
+			if a := atom.Lookup([]byte(tag)); a != 0 {
+				ctx = &html.Node{Type: html.ElementNode, DataAtom: a, Data: tag}
+			}
+		}
+	}
+	frag, err := html.ParseFragment(strings.NewReader(raw.String()), ctx)
+	if err != nil {
+		return nil, false
+	}
+	for _, fn := range frag {
+		if fn.Type == html.ElementNode {
+			return frag, true
+		}
+	}
+	return nil, false
 }
 
 // TextContent concatenates the raw text of id and all its descendants.
