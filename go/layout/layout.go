@@ -138,6 +138,9 @@ func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID
 	if style.Display == css.DisplayNone {
 		return 0
 	}
+	if isNoscript(doc, id) {
+		return 0 // the whole noscript subtree paints nothing (see isNoscript)
+	}
 	if isImage(doc, id) {
 		return st.layoutImage(doc, styles, id, originX, originY, availableWidth, f)
 	}
@@ -249,6 +252,19 @@ func computeContentBox(style *css.Style, originX, originY, availableWidth float6
 func isImage(doc *dom.Document, id dom.NodeID) bool {
 	node := &doc.Nodes[id]
 	return !node.IsText && strings.EqualFold(node.Tag, "img")
+}
+
+// isNoscript reports a <noscript> element: with scripting enabled Firefox
+// treats its contents as raw text, so the subtree is skipped entirely — no
+// boxes and no collected inline text in any formatting context
+// (leading-fidelity S2, odd/tasks/leading-fidelity.md). The DOM parse keeps
+// the markup (the P1 parity with the oracle); only layout drops it. This is
+// the one skip rule; it guards both shared dispatchers, layoutNode (the
+// box path every block/flex/grid context reaches) and collectInlineText
+// (the inline-text path none of them bypass).
+func isNoscript(doc *dom.Document, id dom.NodeID) bool {
+	node := &doc.Nodes[id]
+	return !node.IsText && strings.EqualFold(node.Tag, "noscript")
 }
 
 // layoutImage lays out a replaced <img>: one box holding the decoded
@@ -388,6 +404,9 @@ func collectInlineText(doc *dom.Document, id dom.NodeID, out *strings.Builder) {
 	node := &doc.Nodes[id]
 	if node.IsText {
 		out.WriteString(node.Text)
+		return
+	}
+	if isNoscript(doc, id) {
 		return
 	}
 	switch node.Tag {

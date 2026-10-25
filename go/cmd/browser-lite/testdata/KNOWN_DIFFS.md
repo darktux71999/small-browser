@@ -28,6 +28,22 @@ Cause for all rows: the QuickJS runtime is not ported to the Go engine.
 Closing any row requires porting script evaluation, which is outside the
 current scope; until then these 9 diffs are accepted and expected.
 
+## Category: noscript policy (leading-fidelity S2)
+
+The Go engine no longer applies or renders `<noscript>` contents: a `<style>`
+with a `<noscript>` ancestor is dropped from both author-stylesheet collection
+paths (go/css `Stylesheets` and the CLI loader), and no boxes are produced for
+a `<noscript>` subtree in any formatting context. This matches Firefox with
+scripting enabled, which treats the contents as raw text and never applies
+their CSS; the frozen Rust oracle still collects and lays them out, so **by
+design** any fixture containing a `<noscript>` with styleable content diverges
+from the oracle (the phantom ToU banner, ~200px on live codeberg, no longer
+paints). The DOM parse keeps the markup as children (P1 parity); only style
+collection and layout skip it. No corpus fixture uses `<noscript>`, so today
+this category changes no dump. Spec and divergence decision:
+`odd/tasks/leading-fidelity.md` (S2). Orthogonal to the line-height category
+above and the 9 QuickJS rows.
+
 ## Category: line-height semantics (leading-fidelity S1)
 
 The Go engine now applies CSS 2.1 line-height: the unitless factor scales

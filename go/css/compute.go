@@ -46,16 +46,37 @@ func ComputeSheets(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Styl
 }
 
 // Stylesheets collects the document's <style> sections, in document order,
-// mirroring css_libcss::stylesheets.
+// mirroring css_libcss::stylesheets. A <style> whose ancestors include a
+// <noscript> is not collected: with scripting enabled Firefox treats the
+// noscript contents as raw text and never applies their CSS, so the
+// phantom banner sheets must stay out of the author cascade
+// (leading-fidelity S2, odd/tasks/leading-fidelity.md). The DOM itself
+// keeps the parsed markup (the P1 parity with the oracle).
 func Stylesheets(doc NodeIndex) []string {
 	var out []string
 	for _, id := range doc.QuerySelectorAll("style") {
+		if HasNoscriptAncestor(doc, id) {
+			continue
+		}
 		text := doc.TextContent(id)
 		if strings.TrimSpace(text) != "" {
 			out = append(out, text)
 		}
 	}
 	return out
+}
+
+// HasNoscriptAncestor reports whether the node has a <noscript> ancestor
+// element. It is the one noscript rule the stylesheet-collection paths
+// share: go/css Stylesheets and the CLI loader's inline-style collection
+// both drop what it flags, matching Firefox with scripting enabled.
+func HasNoscriptAncestor(doc NodeIndex, id int) bool {
+	for cur, ok := doc.Parent(id); ok; cur, ok = doc.Parent(cur) {
+		if !doc.IsText(cur) && strings.EqualFold(doc.Tag(cur), "noscript") {
+			return true
+		}
+	}
+	return false
 }
 
 // UAStyleSheet is the minimal user-agent stylesheet, copied verbatim from

@@ -36,7 +36,7 @@ runner `go test ./...` + runner diferencial (con divergencias documentadas).
 | T | Descripción | Spec | Ruta | Estado |
 |---|---|---|---|---|
 | T1 | line-height absoluto (helper único text+paint) + KNOWN_DIFFS | S1 | delegado (ling-3.1-flash) | ✅ (179+108 subtests en verde; vivo 1000x2479 = −457px; differential 5 idénticos registrados) |
-| T2 | política noscript (colección + pintado) | S2 | delegado | pendiente |
+| T2 | política noscript (colección + pintado) | S2 | delegado (qwen3.8-flash) | ✅ (187+113 subtests verdes; vivo 1000x2317 = −162px; banner verificado ausente) |
 | T3 | colapso de márgenes verticales | S3 | delegado | pendiente |
 | T4 | re-medición S7 + informe | S4 | medición | pendiente |
 
@@ -73,3 +73,21 @@ runner `go test ./...` + runner diferencial (con divergencias documentadas).
   como ajuste futuro — S1 sólo fija la semántica del factor. Pines y dependiente
   de métricas de fuente instalada (Noto Sans): y-pins; alturas son
   font-independientes por construcción. `Risk: none`.
+- **L3** (2026-10-25): **S2 aterrizada** (T2, qwen3.8-flash). Regla única de
+  ancestros `css.HasNoscriptAncestor` (go/css/compute.go:73, usada en
+  Stylesheets():58 y sheets.go:87) + regla única de salto `isNoscript`
+  (go/layout/layout.go:265) en los DOS puntos de paso compartidos:
+  `layoutNode` (:141) y `collectInlineText` (:409) — este segundo era necesario
+  porque el texto inline nunca llega a `layoutNode` (probado en RED: dos modos
+  de fuga). Los `<style>` dentro de `<noscript>` no se recogen; las subramas de
+  `<noscript>` no generan cajas ni runs en ningún contexto. El parseo DOM se
+  conserva intacto (pines P1 verdes). **Efecto vivo: `LAYOUT 1000x2317` (−162px
+  sobre 2479)**; el banner fantasma está verificablemente ausente (cero cajas,
+  cero texto ToU tras el header LAYOUT; nav arranca en y=0). Corpus sin
+  fixtures con noscript (grep: 0 de 71) → el differential queda **idéntico al
+  estado registrado de T1** (4 idénticos + js-dom solo-stderr). KNOWN_DIFFS:
+  categoría «noscript policy» añadida, la de line-height intacta. 8 tests nuevos
+  con secuencia RED de dos etapas (helper correcto + regla sin cablear);
+  187+113 subtests, 10/10 paquetes; vet/gofmt limpios. Nota: el costo real del
+  banner fue −162px (predicción −178/−200) — el residuo se cuantifica en T4.
+  `Risk: none`.

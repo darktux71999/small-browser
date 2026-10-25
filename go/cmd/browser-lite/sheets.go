@@ -71,8 +71,12 @@ type loadedSheet struct {
 // inline <style> blocks plus fetched <link rel="stylesheet"> sheets, with
 // @import chains expanded depth-first. Warnings print in oracle order:
 // link failures, then per-sheet import failures, then font registration.
+// A <style> inside a <noscript> is dropped like go/css Stylesheets does:
+// with scripting enabled Firefox never applies its rules (leading-fidelity
+// S2, odd/tasks/leading-fidelity.md).
 func loadSheets(doc *dom.Document, base string, l *loader) []loadedSheet {
 	var out []loadedSheet
+	idx := domIndex{doc}
 	for id := range doc.Nodes {
 		node := &doc.Nodes[id]
 		if node.IsText {
@@ -80,6 +84,9 @@ func loadSheets(doc *dom.Document, base string, l *loader) []loadedSheet {
 		}
 		switch {
 		case strings.EqualFold(node.Tag, "style"):
+			if css.HasNoscriptAncestor(idx, id) {
+				continue
+			}
 			text := doc.TextContent(dom.NodeID(id))
 			if strings.TrimSpace(text) == "" {
 				continue
