@@ -273,6 +273,12 @@ type PositionInset struct {
 type Style struct {
 	// Display: Block/Inline/None (flex and grid containers keep Block).
 	Display Display
+	// InlineBlock marks display:inline-block. Such a box keeps Display
+	// Inline (it flows in a line) but is an atomic inline box: layout gives
+	// it its own border box, sized by its width/height and shrink-to-fit
+	// (CSS 2.1 §9.2.2, §10.3.9), instead of flattening its content into
+	// the surrounding text run.
+	InlineBlock bool
 	// Width/Height/MaxWidth in CSS pixels; nil when not set (auto,
 	// percentage, or max-width:none).
 	Width    *float64

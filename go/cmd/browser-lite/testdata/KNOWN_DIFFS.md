@@ -186,3 +186,22 @@ elements are not painted by either engine's image path and are unchanged.
 Dropped features are listed in the `go/svg` package comment. Reference:
 `odd/tasks/meta1-codeberg.md` (SVG defect family). Orthogonal to the
 categories above, which are unchanged.
+
+## Category: inline replaced and inline-block boxes (meta1 atomic inline)
+
+The Go engine lays out atomic inline boxes in the line of their text run
+(CSS 2.1 §10.8, §10.3.9). An inline `<svg>` is a replaced box rasterized by
+go/svg and painted through the image path, sitting on the text baseline. An
+`<img>` nested in inline content, and an inline-block, each become one atomic
+box instead of being flattened: an inline-block keeps its own border box,
+width, background and border. Before, both were dropped or flattened and their
+pixels never reached the page. The frozen Rust oracle has no inline SVG and
+still flattens inline-block, so **by design** any fixture with an inline `<svg>`
+or inline-block diverges from it in its layout stream and PNG: the inline-SVG
+probes (`probe-svg-gradient`, `probe-svg-path`, `probe-svg-shapes`,
+`probe-svg-text`), `probe-svg-img` (inline-block holding an `<img>`) and
+`nav-a` (inline-block button now painted). Also, an inline `style=""`
+background-image now resolves against the document base instead of
+`browser-lite://inline/`, so `probe-svg-img`'s stderr warning disappears.
+Spec and divergence decision: `odd/tasks/meta1-codeberg.md` (the SVG gap
+briefing). Orthogonal to the categories above.

@@ -35,14 +35,23 @@ func Compute(doc NodeIndex, sheets []string, viewportWidth float64) ([]Style, []
 	for i, cssText := range sheets {
 		inputs[i] = Sheet{URL: "browser-lite://sheet/" + strconv.Itoa(i), CSS: cssText}
 	}
-	return computeInner(doc, inputs, viewportWidth)
+	return computeInner(doc, inputs, viewportWidth, "")
 }
 
 // ComputeSheets computes styles for explicitly URLed sheets (the loader
 // entry point of compute_with_sheets, minus the fetching this unit does
 // not do).
 func ComputeSheets(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style, []string, error) {
-	return computeInner(doc, sheets, viewportWidth)
+	return computeInner(doc, sheets, viewportWidth, "")
+}
+
+// ComputeDocument is ComputeSheets plus the document base URL that the
+// inline style="" declarations resolve their relative url() against. An
+// inline style belongs to the document, so its sheet takes the same base a
+// stylesheet of the page would (CSS 2.1 §7.2); an empty docURL keeps the
+// synthetic browser-lite://inline/N name.
+func ComputeDocument(doc NodeIndex, sheets []Sheet, viewportWidth float64, docURL string) ([]Style, []string, error) {
+	return computeInner(doc, sheets, viewportWidth, docURL)
 }
 
 // Stylesheets collects the document's <style> sections, in document order,
@@ -146,7 +155,7 @@ func ancestorStyle(styles []unsafe.Pointer, doc NodeIndex, id int) unsafe.Pointe
 
 // computeInner is the compute loop, mirroring compute_inner of
 // css_libcss.rs (no-loader path only).
-func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style, []string, error) {
+func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64, docURL string) ([]Style, []string, error) {
 	if viewportWidth < 1.0 {
 		viewportWidth = 1.0
 	}
@@ -233,7 +242,11 @@ func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64) ([]Style
 		var inline *C.css_stylesheet
 		if decls, ok := doc.Attr(id, "style"); ok && strings.TrimSpace(decls) != "" {
 			var err error
-			inline, err = parseSheet(decls, "browser-lite://inline/"+strconv.Itoa(id), true)
+			inlineURL := "browser-lite://inline/" + strconv.Itoa(id)
+			if docURL != "" {
+				inlineURL = docURL
+			}
+			inline, err = parseSheet(decls, inlineURL, true)
 			if err != nil {
 				return nil, nil, err
 			}

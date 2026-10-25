@@ -678,3 +678,23 @@ sería bug de anchura de caja y se corrige ahí.
   HEAD vs candidato = **79/79 idénticos** — cero flips atribuibles. `Risk:
   item 6` (aceptación visual — el body color y el stack `--fonts-regular` ya
   resuelven por var() en vivo).
+- **L34** (2026-10-25): **Huecos del formato inline cerrados** (P19,
+  claude-haiku-5.5#medium — 2ª prueba). Raíces con lecciones finas: (2) el
+  **inline-block estaba mapeado como inline aplanado** — su caja/tamaño/fondo se
+  descartaban antes de layout (fix: flag `InlineBlock` + shrink-to-fit); (3)
+  los estilos inline se nombraban `browser-lite://inline/N` → todo `url()`
+  relativo fallaba (fix: `ComputeDocument(docURL)` — los estilos inline heredan
+  la base del documento); (1) los `<svg>` inline ahora son **cajas atómicas
+  inline** sobre la línea de base (`go/layout/inline.go`, serialización del
+  subárbol a `decodeSVG`, baseline aproximado 0.8em — Pango no expone ascent al
+  paquete text). **En vivo**: POWERED BY ya pinta (caja 100×37.5, 16.6% tinta
+  — TOP-5 #4 cerrado), hearts y footer svg con tinta (46%/43%), altura
+  1823→1847 (+24px de átomos), AE página 13.11→**12.88%** (banda 13:
+  49.14→17.65%). Corpus base-vs-candidato: flips en `probe-svg-img`, `nav-a`
+  (¡el botón inline-block ahora pinta!) y los 4 `probe-svg-*` — todos de la
+  clase pretendida, registrados. **Lo que NO cerró**: los iconos de los botones
+  de soporte (octicon-person/sign-in) — sin caja svg 16×16 en el dump; raíz
+  sospechada: los ítems anónimos de flex/grid siguen con el recolector
+  solo-texto y **tragan átomos inline** (T4b/T4c/P10a tocaron ese camino).
+  Aproximaciones documentadas: currentColor→negro, baseline 0.8em, shrink-to-fit
+  limitado, agujeros silenciosos si el rasterizado falla. `Risk: item 6`.

@@ -241,15 +241,27 @@ func (st *state) applyRelativePosition(style *css.Style, boxStart, runStart int)
 		return
 	}
 	dx, dy := relativeShift(style)
-	for i := boxStart; i < len(st.out.Boxes); i++ {
+	st.shiftFrom(boxStart, runStart, dx, dy)
+}
+
+// shiftFrom translates every box and text run emitted since the given
+// indices, plus the containing blocks recorded for them, by (dx, dy). The
+// flow results are left to the caller: this only moves painted geometry.
+func (st *state) shiftFrom(boxStart, runStart int, dx, dy float64) {
+	st.shiftRange(boxStart, len(st.out.Boxes), runStart, len(st.out.Runs), dx, dy)
+}
+
+// shiftRange translates one recorded range of boxes and runs.
+func (st *state) shiftRange(boxStart, boxEnd, runStart, runEnd int, dx, dy float64) {
+	for i := boxStart; i < boxEnd; i++ {
 		st.out.Boxes[i].X += dx
 		st.out.Boxes[i].Y += dy
 	}
-	for i := runStart; i < len(st.out.Runs); i++ {
+	for i := runStart; i < runEnd; i++ {
 		st.out.Runs[i].X += dx
 		st.out.Runs[i].Y += dy
 	}
-	for i := boxStart; i < len(st.out.Boxes); i++ {
+	for i := boxStart; i < boxEnd; i++ {
 		if cb, ok := st.positionedBoxes[st.out.Boxes[i].Node]; ok {
 			cb.x += dx
 			cb.y += dy
@@ -267,7 +279,7 @@ func (st *state) applyRelativePosition(style *css.Style, boxStart, runStart int)
 // subtrees contribute nothing and are skipped exactly like the main loop
 // skips them.
 func firstCollapseTop(doc *dom.Document, styles []css.Style, id dom.NodeID) (top float64, found bool, leadText bool) {
-	var run strings.Builder
+	var run inlineRun
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
 		if childStyle.Display == css.DisplayNone || childStyle.PositionAbsolute || isNoscript(doc, child) {
@@ -287,7 +299,7 @@ func firstCollapseTop(doc *dom.Document, styles []css.Style, id dom.NodeID) (top
 		}
 		// Inline content (elements and text runs): a non-blank run
 		// flushes line boxes that separate the margins.
-		collectInlineText(doc, child, &run)
+		collectInline(doc, styles, child, &run)
 	}
 	return 0, false, strings.TrimSpace(run.String()) != ""
 }
@@ -296,7 +308,7 @@ func firstCollapseTop(doc *dom.Document, styles []css.Style, id dom.NodeID) (top
 // in-flow block-level participant and whether inline content follows it.
 func lastCollapseBottom(doc *dom.Document, styles []css.Style, id dom.NodeID) (bottom float64, found bool, trailText bool) {
 	children := doc.Nodes[id].Children
-	var run strings.Builder
+	var run inlineRun
 	for i := len(children) - 1; i >= 0; i-- {
 		child := children[i]
 		childStyle := &styles[child]
@@ -315,7 +327,7 @@ func lastCollapseBottom(doc *dom.Document, styles []css.Style, id dom.NodeID) (b
 		}
 		// Inline content (elements and text runs): a non-blank run
 		// flushes line boxes that separate the margins.
-		collectInlineText(doc, child, &run)
+		collectInline(doc, styles, child, &run)
 	}
 	return 0, false, strings.TrimSpace(run.String()) != ""
 }
@@ -446,14 +458,14 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 	// boxes separate them (then both margins are expressed in full), or
 	// this is the consumed first child (its margin already sits above the
 	// parent border).
-	var run strings.Builder
+	var run inlineRun
 	cursor := cursorY
 	var pending float64
 	hasPending := false
 	seenFirst := false
 	var absoluteChildren []absoluteChild
 	place := func(childTop float64) float64 {
-		textH := st.flushText(style, contentX, cursor, contentW, &run)
+		textH := st.flushInline(doc, styles, style, contentX, cursor, contentW, &run)
 		var at float64
 		switch {
 		case textH > 0:
@@ -515,10 +527,10 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 			cursor = at + childStyle.Margin[0] + borderH
 			pending, hasPending = childStyle.Margin[2], true
 		default:
-			collectInlineText(doc, child, &run)
+			collectInline(doc, styles, child, &run)
 		}
 	}
-	tailH := st.flushText(style, contentX, cursor, contentW, &run)
+	tailH := st.flushInline(doc, styles, style, contentX, cursor, contentW, &run)
 
 	bottom := style.Margin[2]
 	contentBottom := cursor
@@ -638,7 +650,7 @@ func isImage(doc *dom.Document, id dom.NodeID) bool {
 // (leading-fidelity S2, odd/tasks/leading-fidelity.md). The DOM parse keeps
 // the markup (the P1 parity with the oracle); only layout drops it. This is
 // the one skip rule; it guards both shared dispatchers, layoutNode (the
-// box path every block/flex/grid context reaches) and collectInlineText
+// box path every block/flex/grid context reaches) and collectInline
 // (the inline-text path none of them bypass).
 func isNoscript(doc *dom.Document, id dom.NodeID) bool {
 	node := &doc.Nodes[id]
@@ -657,11 +669,19 @@ func (st *state) layoutImage(doc *dom.Document, styles []css.Style, id dom.NodeI
 	image := st.images.Image(id)
 	w, h := imageSize(&doc.Nodes[id], style, image, content.w, forcedContentWidth(style, f))
 	y := originY + style.Margin[0] + style.BorderWidth[0] + style.Padding[0]
+	st.emitImage(doc, styles, id, content.x, y, w, h)
+	return h + style.Margin[0] + style.Margin[2]
+}
 
+// emitImage appends the painted box of one replaced element (an <img> or an
+// inline <svg>) at (x, y) with the given border-box size. Block and inline
+// flow share it, so both paint through the same image box.
+func (st *state) emitImage(doc *dom.Document, styles []css.Style, id dom.NodeID, x, y, w, h float64) {
+	style := &styles[id]
 	st.out.Boxes = append(st.out.Boxes, LayoutBox{
 		Node:            id,
 		Tag:             doc.Nodes[id].Tag,
-		X:               content.x,
+		X:               x,
 		Y:               y,
 		W:               w,
 		H:               h,
@@ -677,13 +697,12 @@ func (st *state) layoutImage(doc *dom.Document, styles []css.Style, id dom.NodeI
 		BackgroundPositionX: style.BackgroundPositionX,
 		BackgroundPositionY: style.BackgroundPositionY,
 		BackgroundGradient:  style.BackgroundGradient,
-		Image:               image,
+		Image:               st.images.Image(id),
 		BorderWidth:         style.BorderWidth,
 		BorderStyle:         style.BorderStyle,
 		BorderColor:         style.BorderColor,
 		BorderRadius:        style.BorderRadius,
 	})
-	return h + style.Margin[0] + style.Margin[2]
 }
 
 // forcedContentWidth is the content width the flex algorithm decided for an
@@ -783,7 +802,9 @@ func cutSuffix(s, suffix string) (string, bool) {
 
 // collectInlineText concatenates the inline descendants of a block into a
 // single text run (src/layout.rs:1571-1584). Script, style, head and title
-// subtrees never paint.
+// subtrees never paint. Flex and grid anonymous items use this text-only
+// collector; block flow uses collectInline, which also keeps atomic inline
+// boxes.
 func collectInlineText(doc *dom.Document, id dom.NodeID, out *strings.Builder) {
 	node := &doc.Nodes[id]
 	if node.IsText {

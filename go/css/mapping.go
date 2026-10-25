@@ -440,6 +440,11 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 		// inline runs.
 		out.Display = DisplayInline
 	}
+	if display == cssDisplayInlineBlock {
+		// Atomic inline box (CSS 2.1 §9.2.2): layout lays its content out
+		// as a block inside the line.
+		out.InlineBlock = true
+	}
 	if display == cssDisplayGrid || display == cssDisplayInlineGrid {
 		// Like flex, a grid container keeps DisplayBlock and is marked
 		// here; the track list arrives in applyGridStyles, which reads the

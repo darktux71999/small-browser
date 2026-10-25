@@ -22,6 +22,7 @@ package img
 
 import (
 	"bytes"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"image"
@@ -33,6 +34,7 @@ import (
 	_ "image/png"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -124,6 +126,10 @@ type ImageSet struct {
 	fetched int
 	// one message per failed resource, without the browser-lite: prefix.
 	warnings []string
+	// inline <svg> elements, rasterized from their own markup (no URL, no
+	// fetch). A markup that fails to decode leaves a hole, silently, like
+	// an unreachable image without a warning line of its own.
+	inline map[dom.NodeID]*Image
 }
 
 // Empty returns the set of a page without <img>: what layout's plain entry
@@ -133,6 +139,7 @@ func Empty() *ImageSet {
 		urls:        map[dom.NodeID]string{},
 		backgrounds: map[string]*Image{},
 		cache:       map[string]*Image{},
+		inline:      map[dom.NodeID]*Image{},
 	}
 }
 
@@ -147,6 +154,10 @@ func LoadWithLimits(doc *dom.Document, base string, limits Limits) *ImageSet {
 	set := Empty()
 	for id := range doc.Nodes {
 		node := &doc.Nodes[id]
+		if !node.IsText && asciiEqualFold(node.Tag, "svg") {
+			set.loadInlineSVG(doc, dom.NodeID(id))
+			continue
+		}
 		if node.IsText || !asciiEqualFold(node.Tag, "img") {
 			continue
 		}
@@ -173,11 +184,100 @@ func LoadWithLimits(doc *dom.Document, base string, limits Limits) *ImageSet {
 // Image returns the decoded image for node, or nil when it has none (no
 // src, unreachable, undecodable, or unsupported).
 func (s *ImageSet) Image(node dom.NodeID) *Image {
+	if image, ok := s.inline[node]; ok {
+		return image
+	}
 	url, ok := s.urls[node]
 	if !ok {
 		return nil
 	}
 	return s.cache[url]
+}
+
+// loadInlineSVG rasterizes one inline <svg> element through the same SVG
+// decoder that serves <img src=*.svg>: the element's subtree is serialized
+// back to XML and handed to decodeSVG, so inline and file-based icons share
+// one rasterizer (go/svg). Its intrinsic size comes from its own width,
+// height and viewBox, exactly like a file's root <svg>.
+func (s *ImageSet) loadInlineSVG(doc *dom.Document, id dom.NodeID) {
+	var markup strings.Builder
+	writeSVGMarkup(&markup, doc, id)
+	image, err := decodeSVG([]byte(markup.String()))
+	if err != nil {
+		return
+	}
+	s.inline[id] = image
+}
+
+// svgCamelTags restores the SVG element names the HTML parser lowercases
+// (x/net/html keeps camelCase only for attributes): the go/svg paint server
+// lookups match the spec spelling.
+var svgCamelTags = map[string]string{
+	"lineargradient": "linearGradient",
+	"radialgradient": "radialGradient",
+	"clippath":       "clipPath",
+}
+
+// writeSVGMarkup serializes the subtree at id as well-formed XML: the tag and
+// attribute names as parsed (attributes are already SVG-cased), text and
+// attribute values escaped, empty elements self-closed, attributes in sorted
+// order so the output is deterministic.
+func writeSVGMarkup(b *strings.Builder, doc *dom.Document, id dom.NodeID) {
+	node := &doc.Nodes[id]
+	if node.IsText {
+		_ = xml.EscapeText(b, []byte(node.Text))
+		return
+	}
+	tag := node.Tag
+	if camel, ok := svgCamelTags[tag]; ok {
+		tag = camel
+	}
+	b.WriteByte('<')
+	b.WriteString(tag)
+	keys := make([]string, 0, len(node.Attrs))
+	for k := range node.Attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !xmlName(k) {
+			continue
+		}
+		b.WriteByte(' ')
+		b.WriteString(k)
+		b.WriteString(`="`)
+		_ = xml.EscapeText(b, []byte(node.Attrs[k]))
+		b.WriteByte('"')
+	}
+	if len(node.Children) == 0 {
+		b.WriteString("/>")
+		return
+	}
+	b.WriteByte('>')
+	for _, child := range node.Children {
+		writeSVGMarkup(b, doc, child)
+	}
+	b.WriteString("</")
+	b.WriteString(tag)
+	b.WriteByte('>')
+}
+
+// xmlName reports whether name is a plain XML name the serializer can emit
+// unescaped: letters, digits and the - _ . : punctuation.
+func xmlName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '-', c == '_', c == '.', c == ':':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // LoadBackgroundImages fetches and decodes the background-image URLs of

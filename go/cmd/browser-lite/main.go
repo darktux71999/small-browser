@@ -111,7 +111,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	for i, sheet := range sheets {
 		inputs[i] = css.Sheet{URL: sheet.url, CSS: sheet.stripped}
 	}
-	styles, _, err := css.ComputeSheets(domIndex{doc}, inputs, viewportWidth)
+	// Inline style="" declarations resolve their url() against the document
+	// base, like the stylesheets do (leading-fidelity inline-style fix).
+	styles, _, err := css.ComputeDocument(domIndex{doc}, inputs, viewportWidth, base)
 	if err != nil {
 		fmt.Fprintf(stderr, "browser-lite: %s\n", err)
 		return 1
