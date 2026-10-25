@@ -75,7 +75,8 @@ oráculo — divergencia intencionada documentada). Rama `feat/go-engine`; runne
   que grid/radius); drops conservadores si QuerySelectorAll acepta un selector
   que libcss rechaza o un `@media` anidado no parsea en mq3. `Risk: none`
   (ningún ítem 1-6: la extracción de mapStyle es internal, requested y
-  behavior-pinned). **Proceso**: assess nativo sobre el diff del writer =
-  `high_risk` / review_due → review nativo abierto para esta candidata (RDD
-  default-on); commits previos de feat/go-engine sin assess (lapse del padre,
-  registrado aquí).
+  behavior-pinned). **Proceso**: assess del writer (forma worktree) =
+  `high_risk`; assess de la candidata committed (ce9d6cf..ad71cf3) =
+  **`medium` / `under_budget` → review NO debido** (la porción queda pendiente
+  hasta que un commit posterior alcance el presupuesto). Commits previos de
+  feat/go-engine sin assess (lapse del padre, registrado aquí).
