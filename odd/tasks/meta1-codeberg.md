@@ -438,3 +438,26 @@ sería bug de anchura de caja y se corrige ahí.
   oráculo Rust (que comparte la misma conducta Pango) — ¿fix solo en Go
   (divergencia documentada) o también en el oráculo vía agente externo
   (preserva la paridad byte a byte del diferencial)? `Risk: none` (medición).
+- **L22** (2026-10-25): **Medición M3 — veredicto S7 tras el leading** (parte
+  T4 de `leading-fidelity.md`, ling-3.1-flash). Motor **1000×2297** vs Firefox
+  **988×1669** · brecha **628px** (era 1267) · AE página **14.22%** · fase
+  **d≈155-181** (era ~550). **Bandas 3-10: 4/8** (pasan 3,4,5,10 — mejor
+  tendencia: P6 3/8, P8 2/8, M3 4/8); la banda 9 es fronteriza (21.80 fuzz0 /
+  19.81 fuzz12). **S7 composición**: hero 2 columnas ✓ · sección about 4-across
+  ✓ · estadísticas 4 columnas ✓ · **soporte 3 filas ✗** (compone apilado).
+  Familia de defectos dominante (los tres fixes de leading no la tocan):
+  **composición flex/grid en filas** — soporte `grid repeat(2,1fr)` apilado con
+  botón 938×108 (20% del AE), nav `navbar-left` a 56px con enlaces envueltos +
+  fondo blanco (el `--color-nav-bg` vive en `@layer codeberg-theme` dentro de
+  `@media prefers-color-scheme:light` — la cascada var() no evalúa `@layer`),
+  footer estirado 365 vs ~144. Gaps S10 de pintado: hero bg-image tiled a
+  tamaño natural (FF: `no-repeat center bottom`), `linear-gradient` de cards
+  sin pintar, bg azul blanco detrás de las estadísticas por el tiling. El
+  veredicto honesto: la Meta 1 («componga como Firefox» + bandas <20%) sigue
+  ABIERTA por la composición de filas — el siguiente frente está identificado
+  con geografías exactas (dump + perfiles de tinta + muestras de píxel en
+  /tmp/bl-m3/compose/). Artefactos: /tmp/bl-m3 (COMMANDS.sh, bands.csv,
+  phase-*.csv, side-by-side.png, diff-annotated.png). Nota de método: trim
+  `fuzz 0%` reproduce el 1669 clavado (el fuzz12 se come la franja viva de
+  11px); el AE no es comparable entre generaciones por el re-binning (24
+  bandas sobre max(alturas)). `Risk: none` (medición).

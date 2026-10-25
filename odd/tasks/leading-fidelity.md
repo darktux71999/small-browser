@@ -38,7 +38,7 @@ runner `go test ./...` + runner diferencial (con divergencias documentadas).
 | T1 | line-height absoluto (helper único text+paint) + KNOWN_DIFFS | S1 | delegado (ling-3.1-flash) | ✅ (179+108 subtests en verde; vivo 1000x2479 = −457px; differential 5 idénticos registrados) |
 | T2 | política noscript (colección + pintado) | S2 | delegado (qwen3.8-flash) | ✅ (187+113 subtests verdes; vivo 1000x2317 = −162px; banner verificado ausente) |
 | T3 | colapso de márgenes verticales | S3 | delegado (muse-spark-1.3-contributor) | ✅ (197+113 subtests; vivo 1000x2297 = −20px; flex/grid byte-idénticos) |
-| T4 | re-medición S7 + informe | S4 | medición | pendiente |
+| T4 | re-medición S7 + informe | S4 | medición (ling-3.1-flash) | ✅ (brecha 1267→628px; AE 17.24→14.22%; fase 550→155-181; bandas 3-10: 4/8) |
 
 ## Log
 
@@ -119,3 +119,26 @@ runner `go test ./...` + runner diferencial (con divergencias documentadas).
   no omitido); bloque con altura definida no hace auto-pliegue (desviación menor).
   `Risk: item 3 (stacking de bloque compartido — comportamiento preservado y
   pinneado; flex/grid byte-idénticos)`.
+- **L5** (2026-10-25): **S4/T4 cierra la feature** (ling-3.1-flash). Medición M3:
+  motor **1000×2297** vs Firefox **988×1669** — **brecha 628px (−50% vs P8)** ·
+  AE página **14.22%** (P6 17.47 → P8 17.24 → M3 14.22) · **fase rígida
+  d≈155-181 estable** (P8: d≈550 — el fix S1 eliminó la acumulación interna) ·
+  **bandas 3-10: pasan 4/8** (3,4,5,10; fallan 6:37.2, 7:38.3, 8:24.6, 9:21.8 —
+  la 9 es fronteriza: 19.81% con el trim fuzz12 clavado). Objetivo S7 NO
+  cumplido, con la mejor tendencia de la historia (P6 3/8 → P8 2/8 → M3 4/8).
+  **La brecha residual es UNA familia de defectos: composición flex/grid en
+  filas** — (a) soporte: `grid repeat(2,1fr)` compone APILADO (botón 938×108 a
+  ancho completo vs FF ~230×44 alineado) = 20% del AE total; (b) nav:
+  `navbar-left` medido a 56px → los enlaces envuelven verticalmente + fondo
+  nav blanco (falta `--color-nav-bg` — theme.css lo scopea en `@layer
+  codeberg-theme` dentro de `@media prefers-color-scheme:light` y nuestra
+  cascada var() no evalúa `@layer`); (c) footer estirado (365 vs ~144). Más
+  gaps de pintado S10: hero `background-image` tiled a tamaño natural vs FF
+  `no-repeat center bottom`; `linear-gradient` de las cards sin pintar. El
+  S4 predijo residuo 300-400 y midió 628 — el exceso es exactamente esta
+  familia. Presupuesto de altura por región: nav +132, hero +127, about −111,
+  support +234, footer +221, márgenes +104, anuncio ausente −105 ≈ 628 ✓.
+  **FEATURE S1-S4 COMPLETA.** Medida con `fuzz 0%` (el fuzz12 clavado se come
+  la franja viva de 11px; ambas variantes en /tmp/bl-m3). Caveat: bl-m1/bl-m2
+  fueron borrados por limpieza de tmpfs — COMMANDS.sh reproduce todo. `Risk:
+  none` (medición).
