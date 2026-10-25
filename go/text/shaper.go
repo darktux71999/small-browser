@@ -60,9 +60,12 @@ static void textgo_free(textgo_ctx *c) {
 // tracking the oracle sets in pango::create_layout (src/layout.rs:1828-1902).
 // NUL would truncate the C string, so the caller replaces it with a space
 // first; the explicit length is then redundant and -1 is equivalent.
+// line_height_absolute is the CSS used value (font-size x factor,
+// text.LineHeightAbsolute) in Pango units: CSS 2.1 scales the font-size,
+// not the font's natural height (S1).
 static PangoLayout *textgo_layout_new(PangoContext *ctx, const char *text, const char *family,
 		int size_pango, int weight, int italic, int width_pango, int align, int justify,
-		double line_height, int has_spacing, int spacing_pango) {
+		int line_height_absolute, int has_spacing, int spacing_pango) {
 	PangoLayout *layout = pango_layout_new(ctx);
 	if (!layout) {
 		return NULL;
@@ -81,9 +84,11 @@ static PangoLayout *textgo_layout_new(PangoContext *ctx, const char *text, const
 		pango_layout_set_justify(layout, TRUE);
 	}
 	// Line height and tracking are attributes in Pango 1.58: the layout has
-	// no setter for them (src/layout.rs:1884-1898).
+	// no setter for them (src/layout.rs:1884-1898). The line height is the
+	// absolute CSS used value in Pango units; the factor variant would
+	// scale the font's natural height instead of the font-size (S1).
 	PangoAttrList *attrs = pango_attr_list_new();
-	pango_attr_list_insert(attrs, pango_attr_line_height_new(line_height));
+	pango_attr_list_insert(attrs, pango_attr_line_height_new_absolute(line_height_absolute));
 	if (has_spacing) {
 		pango_attr_list_insert(attrs, pango_attr_letter_spacing_new(spacing_pango));
 	}
@@ -211,8 +216,9 @@ type Style struct {
 	FontWeight uint32
 	// Italic is font-style italic (or oblique).
 	Italic bool
-	// LineHeight: unitless ratio (factor, not px — the oracle passes it to
-	// pango_attr_line_height_new as a factor).
+	// LineHeight: unitless CSS ratio (go/css resolves normal, inherit and
+	// percentages to 1.2). Measure scales the font-size by it into the
+	// absolute line box (S1), never the font's natural height.
 	LineHeight float64
 	// TextAlign selects the Pango alignment (Justify keeps left alignment
 	// plus the justify flag).
@@ -291,10 +297,6 @@ func (s *Shaper) Measure(text string, style Style, width float64) Measured {
 	case AlignJustify:
 		justify = 1
 	}
-	lineHeight := style.LineHeight
-	if lineHeight < 0 {
-		lineHeight = 0
-	}
 	spacing := 0
 	hasSpacing := 0
 	if style.LetterSpacing != 0 {
@@ -312,7 +314,7 @@ func (s *Shaper) Measure(text string, style Style, width float64) Measured {
 	layout := C.textgo_layout_new(s.ctx.ctx, ctext, cfamily,
 		C.int(size*PangoScale), C.int(w), C.int(italic),
 		C.int(wpx*PangoScale), C.int(align), C.int(justify),
-		C.double(lineHeight), C.int(hasSpacing), C.int(spacing))
+		C.int(LineHeightAbsolute(size, style.LineHeight)), C.int(hasSpacing), C.int(spacing))
 	if layout == nil {
 		return Measured{}
 	}

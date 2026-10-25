@@ -225,11 +225,14 @@ static void paint_draw_image(paint_t *p, cairo_surface_t *img,
 // One text run, rebuilt from the run's typography exactly like the measuring
 // shaper builds it (72dpi, same family/weight/style/width/alignment/line
 // height/tracking): the painted lines land where the boxes measured them.
+// line_height_absolute is the CSS used value (font-size x factor,
+// text.LineHeightAbsolute) in Pango units, the same projection Measure sets
+// (S1).
 static void paint_show_text(paint_t *p, PangoContext *ctx,
 		const char *text, const char *family,
 		int size_pango, int weight, int italic,
 		int width_pango, int align, int justify,
-		double line_height, int has_spacing, int spacing_pango,
+		int line_height_absolute, int has_spacing, int spacing_pango,
 		double x, double y,
 		double r, double g, double b, double a) {
 	PangoLayout *layout = pango_layout_new(ctx);
@@ -250,7 +253,7 @@ static void paint_show_text(paint_t *p, PangoContext *ctx,
 		pango_layout_set_justify(layout, TRUE);
 	}
 	PangoAttrList *attrs = pango_attr_list_new();
-	pango_attr_list_insert(attrs, pango_attr_line_height_new(line_height));
+	pango_attr_list_insert(attrs, pango_attr_line_height_new_absolute(line_height_absolute));
 	if (has_spacing) {
 		pango_attr_list_insert(attrs, pango_attr_letter_spacing_new(spacing_pango));
 	}
@@ -572,10 +575,6 @@ func showRun(p *C.paint_t, ctx *C.PangoContext, run *layout.TextRun) {
 	case text.AlignJustify:
 		justify = 1
 	}
-	lineHeight := style.LineHeight
-	if lineHeight < 0 {
-		lineHeight = 0
-	}
 	spacing := 0
 	hasSpacing := 0
 	if style.LetterSpacing != 0 {
@@ -594,7 +593,7 @@ func showRun(p *C.paint_t, ctx *C.PangoContext, run *layout.TextRun) {
 	C.paint_show_text(p, ctx, ctext, cfamily,
 		C.int(size*text.PangoScale), C.int(weight), C.int(italic),
 		C.int(width*text.PangoScale), C.int(align), C.int(justify),
-		C.double(lineHeight), C.int(hasSpacing), C.int(spacing),
+		C.int(text.LineHeightAbsolute(size, style.LineHeight)), C.int(hasSpacing), C.int(spacing),
 		C.double(run.X), C.double(run.Y),
 		C.double(c.R), C.double(c.G), C.double(c.B), C.double(c.A))
 }

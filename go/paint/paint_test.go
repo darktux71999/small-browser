@@ -189,6 +189,38 @@ func TestScrollClipsToViewport(t *testing.T) {
 	}
 }
 
+func TestRenderPaintsTextRun(t *testing.T) {
+	// Smoke for the painter's text path (S1 rewire): showRun rebuilds the
+	// Pango layout through the shared absolute line-height helper, so the
+	// run must still paint ink on the white page.
+	l := &layout.Layout{
+		Width:  200,
+		Height: 40,
+		Runs: []layout.TextRun{{
+			X: 8, Y: 8, Width: 184, Text: "hello lite",
+			Style: css.Style{
+				FontFamily: "Sans",
+				FontSize:   16,
+				LineHeight: 1.2,
+				Color:      css.Color{R: 0, G: 0, B: 0, A: 1},
+			},
+		}},
+	}
+	f, err := paint.Render(l, nil)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	ink := 0
+	for i := 0; i+3 < len(f.Pixels); i += 4 {
+		if f.Pixels[i] != 255 || f.Pixels[i+1] != 255 || f.Pixels[i+2] != 255 || f.Pixels[i+3] != 255 {
+			ink++
+		}
+	}
+	if ink == 0 {
+		t.Fatalf("text run painted no ink")
+	}
+}
+
 func TestRenderPNGWritesFile(t *testing.T) {
 	l := &layout.Layout{
 		Width:  4,

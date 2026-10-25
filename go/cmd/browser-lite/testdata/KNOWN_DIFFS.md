@@ -27,3 +27,21 @@ the page without evaluating `<script>` and keeps the parsed title.
 Cause for all rows: the QuickJS runtime is not ported to the Go engine.
 Closing any row requires porting script evaluation, which is outside the
 current scope; until then these 9 diffs are accepted and expected.
+
+## Category: line-height semantics (leading-fidelity S1)
+
+The Go engine now applies CSS 2.1 line-height: the unitless factor scales
+the **font-size** (Pango's absolute line-height attribute, value computed
+by one shared helper in `go/text` used by both the measuring shaper and
+the painter), not the font's natural logical height (ascent+descent+line
+gap) that Pango's factor attribute scales. The Rust oracle shares the old
+factor semantics and is frozen (`src/layout.rs:1887-1890`; the same fix is
+briefed to the external agent, 2026-10-25), so **by design** every
+text-heavy fixture's dump and PNG outputs now diverge from the oracle
+until the same fix lands there. Measured blast radius on the corpus: 66/71
+fixtures change. The fixtures that remain identical (no engine-side text
+runs, or text only created by scripts the Go engine does not evaluate):
+`border-radius`, `img-attrs`, `img-clamp`, `js-dom` (its only diffs stay
+the stderr-only QuickJS rows above), `net-latin1`. Spec and divergence
+decision: `odd/tasks/leading-fidelity.md` (S1). This category is
+orthogonal to the 9 QuickJS rows above, which are unchanged.

@@ -45,11 +45,34 @@ func TestMeasureSingleLine(t *testing.T) {
 	if line.X != 0 {
 		t.Fatalf("first left-aligned line starts at the left edge, got x=%v", line.X)
 	}
-	if line.Y < 0 || line.Y >= line.H {
-		t.Fatalf("first line y=%v should sit within its own height h=%v (Pango bearing)", line.Y, line.H)
+	// CSS half-leading (leading-fidelity S1): the absolute line box can be
+	// smaller than the font's natural content height, so Pango centres the
+	// glyphs and the first line's y goes negative (this default style is a
+	// 19.2px box over the installed sans's 23px natural height: y = -1.9).
+	// The old factor attribute always grew the natural height, so y was
+	// never negative.
+	if line.Y < -line.H || line.Y >= line.H {
+		t.Fatalf("first line y=%v should sit within one line box of its height h=%v (CSS half-leading)", line.Y, line.H)
 	}
 	if m.Height <= 0 {
 		t.Fatalf("measured height must be positive, got %v", m.Height)
+	}
+
+	// Integral pin (S1): 20px x 1.2 is a 24px line box whatever font
+	// resolves; the installed sans's 28px natural content height centres
+	// inside it, leaving a -2px first-line half-leading.
+	integral := defaultStyle()
+	integral.FontSize = 20
+	integral.LineHeight = 1.2
+	mi := s.Measure("Hello world", integral, 1000)
+	if mi.Height != 24 {
+		t.Fatalf("20px x 1.2 line box = %v, want 24", mi.Height)
+	}
+	if len(mi.Lines) != 1 {
+		t.Fatalf("20px x 1.2 short run should be one line, got %d", len(mi.Lines))
+	}
+	if mi.Lines[0].Y != -2 {
+		t.Fatalf("20px x 1.2 first line y = %v, want -2 (CSS half-leading)", mi.Lines[0].Y)
 	}
 }
 
@@ -100,6 +123,52 @@ func TestMeasureLineHeightScales(t *testing.T) {
 	hl := s.Measure(text, loose, 200).Height
 	if hl <= hm*1.5 {
 		t.Fatalf("line-height 2 should clearly exceed line-height 1 (tight=%v loose=%v)", hm, hl)
+	}
+}
+
+func TestMeasureLineHeightAbsolute(t *testing.T) {
+	s, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer s.Close()
+
+	// CSS 2.1 (leading-fidelity S1): a unitless line-height factor scales
+	// the font-size, so the line box is round(size x factor) regardless of
+	// the resolved font's natural height. Pango's absolute attribute takes
+	// Pango units and snaps the layout to whole device pixels.
+	cases := []struct {
+		name       string
+		fontSize   float64
+		lineHeight float64
+		wantHeight float64
+	}{
+		{"20px at 1.2 is a 24px line box", 20, 1.2, 24},
+		{"16px at 1.5 is a 24px line box", 16, 1.5, 24},
+		{"16px at 1 is a 16px box below the natural height", 16, 1.0, 16},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			style := defaultStyle()
+			style.FontSize = tc.fontSize
+			style.LineHeight = tc.lineHeight
+			m := s.Measure("Hello world", style, 1000)
+			if len(m.Lines) != 1 {
+				t.Fatalf("single short run should be one line, got %d", len(m.Lines))
+			}
+			if m.Height != tc.wantHeight {
+				t.Fatalf("line box height = %v, want %v (font-size %v x line-height %v)",
+					m.Height, tc.wantHeight, tc.fontSize, tc.lineHeight)
+			}
+		})
+	}
+
+	// Half-leading pin: 16px x 1.2 is a 19.2px box over the installed
+	// sans's 23px natural height, so the first line starts at y = -1.9
+	// (the P9a diagnosis value; whole Pango units make it exact).
+	m := s.Measure("Hello world", defaultStyle(), 1000)
+	if y := m.Lines[0].Y; y != -1.8994140625 {
+		t.Fatalf("16px x 1.2 first line y = %v, want -1.8994140625 (CSS half-leading)", y)
 	}
 }
 
