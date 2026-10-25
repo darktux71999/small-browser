@@ -443,3 +443,61 @@ func (st *state) placeAtom(doc *dom.Document, styles []css.Style, a *inlineAtom,
 	}
 	st.emitImage(doc, styles, a.id, x, y, a.w, a.h)
 }
+
+// Anonymous flex and grid items share the block-flow inline machinery above
+// (CSS Flexbox §4.1, CSS Grid §5.1: the container's inline content becomes
+// one anonymous item). The collectors in flex.go and grid.go build an
+// inlineRun through collectInline — the same single collector block flow
+// uses — so atomic boxes are never flattened; the measure helpers below and
+// flushInline size and emit the run. Runs without atoms take exactly the
+// text-only paths the flex measure always used, so text-only fixtures never
+// move: only runs with atoms change.
+
+// anonBlank reports whether an anonymous run carries nothing to lay out:
+// blank text and no atoms. Both collectors drop such runs instead of
+// building an empty item.
+func anonBlank(run *inlineRun) bool {
+	return strings.TrimSpace(run.String()) == ""
+}
+
+// anonMaxContentWidth is the max-content width of an anonymous item's run:
+// its unwrapped advance, atoms included. Without atoms it is the exact
+// text-only probe the flex measure always used; with atoms the words and
+// the atoms' margin-box widths sum through the same tokenizer the line
+// breaker uses, measured in a scratch buffer so inline-block boxes laid out
+// while measuring never reach the page.
+func (st *state) anonMaxContentWidth(doc *dom.Document, styles []css.Style, style *css.Style, run *inlineRun) float64 {
+	if !run.hasAtoms() {
+		measured := st.shaper.Measure(run.plainText(), adaptStyle(style), 1000000)
+		widest := 0.0
+		for _, line := range measured.Lines {
+			widest = max(widest, line.W)
+		}
+		return widest
+	}
+	scratch := &state{shaper: st.shaper, images: st.images, out: &Layout{}}
+	toks := scratch.tokenizeInline(doc, styles, style, run.items, nowrapWidth)
+	space := scratch.spaceWidth(style)
+	var w float64
+	for _, t := range toks {
+		if t.kind == tokSpace {
+			w += space
+		} else {
+			w += t.w
+		}
+	}
+	return w
+}
+
+// anonHeight is the height of an anonymous item's run laid out at width.
+// Without atoms it is the exact text-only measure; with atoms the run is
+// laid out in a scratch buffer through flushInline, so the line's atoms set
+// the height exactly as the real pass will.
+func (st *state) anonHeight(doc *dom.Document, styles []css.Style, style *css.Style, run *inlineRun, width float64) float64 {
+	if !run.hasAtoms() {
+		return measureTextHeight(st, run.plainText(), style, width)
+	}
+	scratch := &state{shaper: st.shaper, images: st.images, out: &Layout{}}
+	cp := &inlineRun{items: append([]inlineItem(nil), run.items...)}
+	return scratch.flushInline(doc, styles, style, 0, 0, max(width, 1), cp)
+}

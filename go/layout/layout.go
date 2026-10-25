@@ -802,9 +802,9 @@ func cutSuffix(s, suffix string) (string, bool) {
 
 // collectInlineText concatenates the inline descendants of a block into a
 // single text run (src/layout.rs:1571-1584). Script, style, head and title
-// subtrees never paint. Flex and grid anonymous items use this text-only
-// collector; block flow uses collectInline, which also keeps atomic inline
-// boxes.
+// subtrees never paint. Block max-content probes use this text-only
+// collector; block flow and the flex/grid anonymous items use collectInline,
+// which also keeps atomic inline boxes.
 func collectInlineText(doc *dom.Document, id dom.NodeID, out *strings.Builder) {
 	node := &doc.Nodes[id]
 	if node.IsText {

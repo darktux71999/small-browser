@@ -698,3 +698,22 @@ sería bug de anchura de caja y se corrige ahí.
   solo-texto y **tragan átomos inline** (T4b/T4c/P10a tocaron ese camino).
   Aproximaciones documentadas: currentColor→negro, baseline 0.8em, shrink-to-fit
   limitado, agujeros silenciosos si el rasterizado falla. `Risk: item 6`.
+- **L35** (2026-10-25): **Iconos de flex/grid — TOP-5 visual COMPLETO** (P20,
+  muse-spark — entrega limpia, sin `partial`). Los ítems anónimos de flex/grid
+  pasaron de texto crudo (`*string` + recolector solo-texto) a `*inlineRun`
+  usando **el único recolector de inline** (`collectInline`/`flushInline`) con
+  helpers compartidos `anonMaxContentWidth`/`anonHeight`; los runs solo-texto
+  delegan en las rutas de medida EXACTAS anteriores (solo se mueven los runs con
+  átomos — preservación quirúrgica). **En vivo**: octicon-person y octicon-sign-in
+  (16×16) ya pintan en sus `#anonymous` de flex (sonda (766,11): de texto azul
+  colapsado a tinta real), sociales del héroe (25×24/24×24) y footer — 12 cajas
+  svg vs 7 antes. Altura 1847→1872 (+25px), AE página 12.88→**11.99%**.
+  Corpus base-vs-candidato: **flip set vacío** (ningún fixture tiene átomos en
+  flex/grid). 2 tests RED→GREEN (el primero corrigió su propia aserción — el
+  átomo más alto que el ascent inicia por encima: overlap, no igualdad de Y);
+  layout 60→62 PASS; 11 paquetes verdes. **Cola menor anotada**: el
+  `maxContentWidth` genérico (subramas de ítems reales) sigue solo-texto → el
+  shrink-to-fit puede quedarse corto (las cajas pintan por flujo de bloque;
+  solo la base de sizing). Con esto el **TOP-5 del QA visual (L30) queda
+  cerrado en su totalidad**: píldora ✓ POWERED BY ✓ botones ✓ footer ✓
+  héroe ✓. `Risk: none`.

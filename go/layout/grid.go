@@ -17,8 +17,6 @@
 package layout
 
 import (
-	"strings"
-
 	"browser-lite/css"
 	"browser-lite/dom"
 )
@@ -30,8 +28,10 @@ import (
 type gridItem struct {
 	// node is the DOM node, or NoNode for an anonymous item.
 	node dom.NodeID
-	// text is the inline content of an anonymous item, nil for real items.
-	text *string
+	// run is the inline content of an anonymous item, nil for real items.
+	// It is an inlineRun on inline.go's single collector, so atomic boxes
+	// survive exactly as in block flow.
+	run *inlineRun
 	// style is the item's own style (the container's, border-stripped,
 	// for anonymous items).
 	style css.Style
@@ -270,7 +270,7 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 		fh := max(item.h+item.style.Padding[0]+item.style.Padding[2], 0)
 		itemForced := forced{width: &fw, height: &fh, blockify: true}
 		var bottom float64
-		if item.text != nil {
+		if item.run != nil {
 			// An anonymous item: the inline content of the container
 			// in a block of its own.
 			st.out.Boxes = append(st.out.Boxes, LayoutBox{
@@ -285,9 +285,7 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 				Bold:        item.style.Bold,
 				BorderColor: [4]css.Color{item.style.Color, item.style.Color, item.style.Color, item.style.Color},
 			})
-			var run strings.Builder
-			run.WriteString(*item.text)
-			st.flushText(&item.style, item.x, item.y, max(item.w, 1), &run)
+			st.flushInline(doc, styles, &item.style, item.x, item.y, max(item.w, 1), item.run)
 			bottom = item.y + item.h
 		} else {
 			runStarts[item.node] = len(st.out.Runs)
@@ -321,10 +319,10 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 // (src/layout.rs:1150-1211).
 func collectGridItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []gridItem {
 	var items []gridItem
-	var text strings.Builder
+	var run inlineRun
 	pushText := func() {
-		if strings.TrimSpace(text.String()) == "" {
-			text.Reset()
+		if anonBlank(&run) {
+			run.items = nil
 			return
 		}
 		// An anonymous item has no box of its own in CSS: the
@@ -339,9 +337,9 @@ func collectGridItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []gr
 		anon.BorderRadius = [4]css.Radius{}
 		anon.Padding = [4]float64{}
 		anon.Margin = [4]float64{}
-		s := text.String()
-		items = append(items, gridItem{node: NoNode, text: &s, style: anon, colSpan: 1, rowSpan: 1})
-		text.Reset()
+		cp := run
+		run.items = nil
+		items = append(items, gridItem{node: NoNode, run: &cp, style: anon, colSpan: 1, rowSpan: 1})
 	}
 
 	for _, child := range doc.Nodes[id].Children {
@@ -350,12 +348,12 @@ func collectGridItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []gr
 			continue
 		}
 		if doc.Nodes[child].IsText {
-			text.WriteString(doc.Nodes[child].Text)
+			collectInline(doc, styles, child, &run)
 			continue
 		}
 		if childStyle.Display == css.DisplayInline {
 			// The inline content of the container joins the anonymous item.
-			collectInlineText(doc, child, &text)
+			collectInline(doc, styles, child, &run)
 			continue
 		}
 		pushText()
@@ -430,7 +428,7 @@ func autoTrackWidth(items []gridItem, col int, doc *dom.Document, styles []css.S
 // measuring helpers over the same content instead of re-implementing them.
 // Exact port of flex_view_of (src/layout.rs:1278-1289).
 func flexViewOf(item *gridItem) flexItem {
-	return flexItem{node: item.node, text: item.text, style: item.style}
+	return flexItem{node: item.node, run: item.run, style: item.style}
 }
 
 // spanSize is the size of span consecutive tracks starting at start,

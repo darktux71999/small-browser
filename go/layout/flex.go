@@ -30,8 +30,10 @@ import (
 type flexItem struct {
 	// node is the DOM node, or NoNode for an anonymous item.
 	node dom.NodeID
-	// text is the inline content of an anonymous item, nil for real items.
-	text *string
+	// run is the inline content of an anonymous item, nil for real items.
+	// It is an inlineRun on inline.go's single collector, so atomic boxes
+	// survive exactly as in block flow.
+	run *inlineRun
 	// style is the item's own style (the container's, border-stripped,
 	// for anonymous items).
 	style css.Style
@@ -296,7 +298,7 @@ func (st *state) layoutFlexContainer(doc *dom.Document, styles []css.Style, id d
 		}
 		itemForced := forced{width: &fw, height: &fh, blockify: true}
 		var bottom float64
-		if item.text != nil {
+		if item.run != nil {
 			// An anonymous item: the inline content of the container
 			// in a block of its own.
 			st.out.Boxes = append(st.out.Boxes, LayoutBox{
@@ -311,9 +313,7 @@ func (st *state) layoutFlexContainer(doc *dom.Document, styles []css.Style, id d
 				Bold:        item.style.Bold,
 				BorderColor: [4]css.Color{item.style.Color, item.style.Color, item.style.Color, item.style.Color},
 			})
-			var run strings.Builder
-			run.WriteString(*item.text)
-			st.flushText(&item.style, item.x, item.y, max(item.main, 1), &run)
+			st.flushInline(doc, styles, &item.style, item.x, item.y, max(item.main, 1), item.run)
 			bottom = item.y + item.cross
 		} else {
 			runStarts[item.node] = len(st.out.Runs)
@@ -347,10 +347,10 @@ func (st *state) layoutFlexContainer(doc *dom.Document, styles []css.Style, id d
 // (src/layout.rs:665-726).
 func collectFlexItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []flexItem {
 	var items []flexItem
-	var text strings.Builder
+	var run inlineRun
 	pushText := func() {
-		if strings.TrimSpace(text.String()) == "" {
-			text.Reset()
+		if anonBlank(&run) {
+			run.items = nil
 			return
 		}
 		// An anonymous item has no box of its own in CSS: the
@@ -366,9 +366,9 @@ func collectFlexItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []fl
 		anon.BorderRadius = [4]css.Radius{}
 		anon.Padding = [4]float64{}
 		anon.Margin = [4]float64{}
-		s := text.String()
-		items = append(items, flexItem{node: NoNode, text: &s, style: anon})
-		text.Reset()
+		cp := run
+		run.items = nil
+		items = append(items, flexItem{node: NoNode, run: &cp, style: anon})
 	}
 
 	for _, child := range doc.Nodes[id].Children {
@@ -377,12 +377,12 @@ func collectFlexItems(doc *dom.Document, styles []css.Style, id dom.NodeID) []fl
 			continue
 		}
 		if doc.Nodes[child].IsText {
-			text.WriteString(doc.Nodes[child].Text)
+			collectInline(doc, styles, child, &run)
 			continue
 		}
 		if childStyle.Display == css.DisplayInline {
 			// The inline content of the container joins the anonymous item.
-			collectInlineText(doc, child, &text)
+			collectInline(doc, styles, child, &run)
 			continue
 		}
 		pushText()
@@ -571,23 +571,17 @@ func columnItemWidth(doc *dom.Document, styles []css.Style, item *flexItem, cros
 }
 
 // itemMaxContentWidth is the max-content width of a flex item: the DOM
-// subtree of a real item, or the unwrapped text of an anonymous one (whose
+// subtree of a real item, or the unwrapped run of an anonymous one (whose
 // node is the NoNode sentinel and must never reach the DOM lookups).
 // Exact port (src/layout.rs:1322-1340).
 func itemMaxContentWidth(item *flexItem, doc *dom.Document, styles []css.Style, st *state) float64 {
 	if item.node == NoNode {
-		text := ""
-		if item.text != nil {
-			text = *item.text
+		if item.run == nil {
+			return 0
 		}
 		// A huge width keeps every word on one line: the layout width
 		// is an i32 of Pango units, so stay far below its range.
-		measured := st.shaper.Measure(text, adaptStyle(&item.style), 1000000)
-		widest := 0.0
-		for _, line := range measured.Lines {
-			widest = max(widest, line.W)
-		}
-		return widest
+		return st.anonMaxContentWidth(doc, styles, &item.style, item.run)
 	}
 	return maxContentWidth(doc, styles, item.node, st)
 }
@@ -596,8 +590,8 @@ func itemMaxContentWidth(item *flexItem, doc *dom.Document, styles []css.Style, 
 // scratch buffer so the real layout can place the item afterwards. Exact
 // port of measure_item_height (src/layout.rs:1342-1380).
 func measureItemHeight(doc *dom.Document, styles []css.Style, item *flexItem, row bool, contentWidth float64, st *state) float64 {
-	if item.text != nil {
-		return measureTextHeight(st, *item.text, &item.style, contentWidth)
+	if item.run != nil {
+		return st.anonHeight(doc, styles, &item.style, item.run, contentWidth)
 	}
 	pStart, pEnd := crossPadding(&item.style, row)
 	fw := max(contentWidth+pStart+pEnd, 0)
@@ -672,16 +666,20 @@ func maxContentWidth(doc *dom.Document, styles []css.Style, id dom.NodeID, st *s
 // contribute nothing, mirroring the collector dropping blank text.
 func maxContentWidthRowFlex(style *css.Style, doc *dom.Document, styles []css.Style, id dom.NodeID, st *state) float64 {
 	var total float64
-	var text strings.Builder
+	var run inlineRun
 	items := 0
 	flush := func() {
-		if strings.TrimSpace(text.String()) == "" {
-			text.Reset()
+		if anonBlank(&run) {
+			run.items = nil
 			return
 		}
-		total += naturalTextWidth(st, text.String(), style)
+		if run.hasAtoms() {
+			total += st.anonMaxContentWidth(doc, styles, style, &run)
+		} else {
+			total += naturalTextWidth(st, run.plainText(), style)
+		}
 		items++
-		text.Reset()
+		run.items = nil
 	}
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
@@ -704,7 +702,7 @@ func maxContentWidthRowFlex(style *css.Style, doc *dom.Document, styles []css.St
 			items++
 			continue
 		}
-		collectInlineText(doc, child, &text)
+		collectInline(doc, styles, child, &run)
 	}
 	flush()
 	gaps := items - 1
