@@ -37,10 +37,13 @@ codeberg.org. Mirror Engram: pendiente.
   `gap`/`row-gap`/`column-gap`, `flex` (grow/shrink/basis), `justify-content`
   (start/center/end/space-between) y `align-items` (start/center/stretch) — para
   que codeberg.org componga como Firefox: hero a 2 columnas, sección a 3,
-  estadísticas a 4 y soporte a 3 filas. Objetivo medible: acercar la altura de
-  4403px a los 1901px de Firefox y bajar las bandas 3–10 por debajo del 20% de
-  diff (método de bandas con `magick compare -metric AE -fuzz 25%`, referencia
-  Firefox claro vía `layout.css.prefers-color-scheme.content-override=1`).
+  estadísticas a 4 y soporte a 3 filas. Objetivo medible: acercar la altura a la
+  referencia Firefox y bajar las bandas 3–10 por debajo del 20% de diff (método
+  de bandas con `magick compare -metric AE -fuzz 25%`, referencia Firefox claro
+  vía `layout.css.prefers-color-scheme.content-override=1`). **Referencia
+  re-baselada 2026-10-25 (L21): 1669px con el entorno de fuentes fijado**
+  (Liberation/DejaVu/Noto instaladas vía KISS; el histórico «1901px» era
+  artefacto del fallback monoespaciado que inflaba también a Firefox).
 - **S8** — Grid mínimo (prioridad fijada por el usuario el 2026-10-23: «podemo
   empezar por grid minimo»): `display:grid` crea un contexto de formato grid;
   `grid-template-columns` con valores `px`, `fr`, `auto` y `repeat(n, pista)`;
@@ -409,3 +412,29 @@ sería bug de anchura de caja y se corrige ahí.
   Artefactos: /tmp/bl-m1 (side-by-side.png, diff-annotated.png, bands.csv,
   COMMANDS.sh con la reproducción exacta). Deriva viva: contador de users
   ±1 entre capturas (documentado en L15). `Risk: none` (solo medición).
+- **L21** (2026-10-25): **Re-medición S7 con fuentes reales** (qwen3.8-flash) —
+  **la hipótesis tipográfica queda FALSIFICADA** y con ella el «1901px» como
+  referencia. Tras instalar Liberation/DejaVu/Noto (P7, recetas KISS en sprint):
+  Go **1000×2936** (−239) · Firefox **1000×1669** (−232) · **brecha Go−FF
+  +1267px sin cambiar** (era +1274) · AE página **17.24%** (era 17.47%). El
+  fallback roto inflaba a AMBOS motores por igual — por eso el histórico
+  «1901px de Firefox» era un artefacto del entorno de fuentes. Las fuentes sí
+  arreglaron la cabecera: banda 0 (24.94→21.53), banda 4 (16.27→11.18), banda 3
+  estable en 2.52. **Objetivo bandas 3–10 < 20%: NO cumplido** — 6 de 8 exceden
+  (5:25.93, 6:55.40, 7:40.67, 8:25.61, 9:34.81, 10:35.64); la banda 8 empeoró
+  (18.58→25.61). **Diagnóstico dominante confirmado como acumulación interna**:
+  escaneo de fase rígida apenas se movió (d≈575→550 en el texto medio, con
+  ~36% de mismatch a d=0) y los mejores offsets por zona crecen de forma no
+  rígida (~750px en estadísticas, ~550 en texto medio, ~275/150 en la lista de
+  repos) → **line-box/leading del propio motor acumulándose por documento**, no
+  el entorno de fuentes (ya correcto y fijado como condición de referencia).
+  La palanca siguiente es la computación de leading/line-height del motor contra
+  las métricas de Firefox. Notas de método: al cambiar la altura, la rejilla de
+  24 bandas re-bina los límites (los deltas por índice son aproximados; los
+  robustos son AE total y el escaneo de fase); deriva viva del contador ±1 sin
+  cuantificar. Artefactos: /tmp/bl-m2 (bands-delta.csv, phase-*.txt,
+  COMMANDS.sh); /tmp/bl-m1 intacto como evidencia ANTES. **Decisión pendiente
+  para el usuario**: el fix de leading cambia el layout de texto → divergirá del
+  oráculo Rust (que comparte la misma conducta Pango) — ¿fix solo en Go
+  (divergencia documentada) o también en el oráculo vía agente externo
+  (preserva la paridad byte a byte del diferencial)? `Risk: none` (medición).
