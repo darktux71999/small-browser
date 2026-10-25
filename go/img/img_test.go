@@ -209,14 +209,11 @@ func TestDecodeRejectsBadBodies(t *testing.T) {
 	}{
 		// The empty body reports a reason, never decodes.
 		{"empty", nil, "empty body"},
-		// SVG is detected before decoding and named in the error, exactly
-		// like the oracle (src/img.rs looks_like_svg).
-		{"svg plain", []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), "SVG images are not supported"},
-		{"svg prolog", []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>`), "SVG images are not supported"},
-		{"svg comment", []byte(`<!-- hi --><svg></svg>`), "SVG images are not supported"},
-		{"svg doctype", []byte(`<!DOCTYPE svg><svg></svg>`), "SVG images are not supported"},
-		{"svg bom", append([]byte{0xEF, 0xBB, 0xBF}, []byte("  <svg></svg>")...), "SVG images are not supported"},
-		{"svg uppercase in prolog", []byte(`<?xml version="1.0"?><SVG></SVG>`), "SVG images are not supported"},
+		// SVG is detected before decoding; a document that looks like SVG
+		// but is not a well-formed <svg> root fails with the svg package's
+		// message instead of a generic format error.
+		{"svg truncated markup", []byte(`<svg><g></svg>`), "invalid SVG markup: XML syntax error on line 1: element <g> closed by </svg>"},
+		{"svg uppercase root", []byte(`<?xml version="1.0"?><SVG></SVG>`), "not an SVG document: root element is <SVG>"},
 		// A body that sniffs as no known format reports gdk-pixbuf's message,
 		// the user-visible text of the oracle (observed oracle stderr:
 		// "skipping image ... img-notimage.png: Unrecognized image file
@@ -353,13 +350,6 @@ func TestLoadWarningsForBrokenResources(t *testing.T) {
 			html:   `<img src="img-notimage.png">`,
 			base:   baseFor(),
 			want:   "skipping image ../../test/data/img-notimage.png: Unrecognized image file format",
-			failed: 1,
-		},
-		{
-			name:   "svg is unsupported",
-			html:   `<img src="probe-svg-image.svg">`,
-			base:   baseFor(),
-			want:   "skipping image ../../test/data/probe-svg-image.svg: SVG images are not supported",
 			failed: 1,
 		},
 		{
@@ -702,3 +692,108 @@ const GIF = `
 const WEBP = `
     524946461c000000574542505650384c0f0000002f014000000710fd8ffe0722a2ff0100
 `
+
+// ---------------------------------------------------------------------------
+// SVG decoding
+// ---------------------------------------------------------------------------
+
+// The probe fixture is a 240x120 viewBox with a blue disc at user (60,60)
+// (#2255aa), an orange rectangle over user x 120..220 (#aa5522) and a pale
+// background (#eef4ff). The raster is 512 px wide, so user x maps to 2.133x.
+func TestDecodeSVGFixtureRendersInk(t *testing.T) {
+	body, err := os.ReadFile(fixture("probe-svg-image.svg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := Decode(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if image.Width != 240 || image.Height != 120 {
+		t.Fatalf("intrinsic = %dx%d, want 240x120", image.Width, image.Height)
+	}
+	rw, rh := image.RasterSize()
+	if rw != 512 || rh != 256 || len(image.RGBA) != int(rw*rh*4) {
+		t.Fatalf("raster = %dx%d with %d bytes, want 512x256", rw, rh, len(image.RGBA))
+	}
+	if !image.KeepAspect {
+		t.Fatal("an SVG keeps its aspect ratio inside the box")
+	}
+	at := func(x, y int) [4]byte {
+		i := (y*int(rw) + x) * 4
+		return [4]byte{image.RGBA[i], image.RGBA[i+1], image.RGBA[i+2], image.RGBA[i+3]}
+	}
+	tests := []struct {
+		name string
+		x, y int
+		want [3]byte
+	}{
+		{"disc centre", 128, 128, [3]byte{0x22, 0x55, 0xaa}},
+		{"orange rect", 363, 128, [3]byte{0xaa, 0x55, 0x22}},
+		{"pale background", 5, 5, [3]byte{0xee, 0xf4, 0xff}},
+	}
+	for _, tt := range tests {
+		got := at(tt.x, tt.y)
+		if got[3] != 255 || got[0] != tt.want[0] || got[1] != tt.want[1] || got[2] != tt.want[2] {
+			t.Fatalf("%s pixel = %v, want opaque %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestDecodeSVGIntrinsicSizeIsTheCSSSize(t *testing.T) {
+	// Layout reads Width/Height as the natural size of an unhinted <img>:
+	// it must be the CSS size, not the raster size.
+	image, err := Decode([]byte(`<svg width="16" height="16" viewBox="0 0 800 300"><rect width="800" height="300"/></svg>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if image.Width != 16 || image.Height != 16 {
+		t.Fatalf("intrinsic = %dx%d, want 16x16", image.Width, image.Height)
+	}
+	if rw, rh := image.RasterSize(); rw != 512 || rh != 192 {
+		t.Fatalf("raster = %dx%d, want 512x192 (the viewBox aspect)", rw, rh)
+	}
+}
+
+func TestDecodeSVGWithoutSizeUsesTheDefault(t *testing.T) {
+	image, err := Decode([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if image.Width != 300 || image.Height != 150 {
+		t.Fatalf("intrinsic = %dx%d, want the 300x150 default", image.Width, image.Height)
+	}
+}
+
+func TestDecodeSVGChecksTheIntrinsicPixelCount(t *testing.T) {
+	_, err := Decode([]byte(`<svg width="100000" height="100000"></svg>`))
+	if err == nil || !strings.Contains(err.Error(), "pixel limit") {
+		t.Fatalf("error = %v, want the pixel limit", err)
+	}
+}
+
+func TestRasterImagesKeepTheirPixelSize(t *testing.T) {
+	doc := dom.Parse(`<img src="img-red.png">`)
+	images := Load(doc, baseFor())
+	image := images.Image(firstImg(t, doc))
+	if image == nil {
+		t.Fatal("img-red.png must load")
+	}
+	if rw, rh := image.RasterSize(); rw != 4 || rh != 3 || image.KeepAspect {
+		t.Fatalf("raster %dx%d keepAspect=%v, want 4x3 stretched", rw, rh, image.KeepAspect)
+	}
+}
+
+func TestLoadDecodesSVGImage(t *testing.T) {
+	doc := dom.Parse(`<body><img src="probe-svg-image.svg"></body>`)
+	node := firstImg(t, doc)
+
+	images := Load(doc, baseFor())
+
+	if len(images.Warnings()) != 0 {
+		t.Fatalf("warnings = %v, want none", images.Warnings())
+	}
+	if image := images.Image(node); image == nil || image.Width != 240 {
+		t.Fatalf("SVG img must decode: %v", images.Warnings())
+	}
+}

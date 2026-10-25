@@ -629,3 +629,30 @@ sería bug de anchura de caja y se corrige ahí.
   dom +1: atributo booleano). Suites verdes en su superficie; `go test ./...`
   con fallos PREEXISTENTES de workers en vuelo correctamente atribuidos
   (el RED de P17 en go/css, la compilación de P16 en go/svg). `Risk: none`.
+- **L32** (2026-10-25): **Subsistema SVG mínimo implementado** (P16,
+  claude-haiku-5.5#medium — 1ª prueba del slot de código). `go/svg/` nuevo:
+  paths con TODOS los comandos (M/L/H/V/C/S/Q/T/A/Z, relativos, repeticiones
+  implícitas, flags de arco compactados — los archivos reales de Codeberg usan
+  todo), shapes básicas, **fill y stroke** (el wordmark de Forgejo es
+  stroke-based: `stroke:#f50`), **cascada CSS dentro del SVG** (`<style>` con
+  selectores de tipo/clase + atributos `style=` + herencia), transforms,
+  opacidades, fill-rule, sizing por width/height+viewBox, y rasterizador propio
+  (4 sub-scanlines, cobertura horizontal exacta, source-over premultiplicado).
+  Descartado con cita: gradientes→color medio, clipPath/mask/pattern/marker/
+  filter/`<use>`/text, dash arrays, joins miter, rx/ry, preserveAspectRatio ≠
+  meet. `go/img`: ruta de decode SVG (el error «not supported» desaparece);
+  `Image` gana `RasterWidth/RasterHeight/KeepAspect/RasterSize` (Width/Height
+  siguen siendo el tamaño CSS — layout dimensiona `<img>` desde ellos; decisión
+  documentada). `go/paint`: fit KeepAspect + escalado del raster al tamaño CSS
+  en fondos. Tests: svg 43 + img 39 + paint 17 RUN, RED→GREEN con **2
+  expectativas propias corregidas — el motor tenía razón** (honestidad). Corpus
+  **77/79 idénticos**; flips por diseño: `img-svg.html` (stderr+PNG — ¡tinta
+  nueva!) y `probe-svg-img.html` (stderr). **Verificación del padre** (lo que
+  dejó `partial`): 4 warnings SVG desaparecidos ✓, altura sin cambios (1823) ✓,
+  tinta real: héroe-logo **33.8%**, footer-logo **100%** ✓, rig 13.11% página
+  (vs 13.15% pre-SVG). **Brechas SVG restantes (familia de layout)**: los
+  `<svg>` INLINE (iconos de botones/nav — TOP-5 del QA) no se pintan (necesitan
+  participación de layout), `<img>` dentro de inline-block no recibe caja
+  (preexistente — el logo de POWERED BY cae aquí), y `url()` de fondo en
+  `style=` inline no resuelve (preexistente). Siguiente frente de layout.
+  `Risk: item 6` (aceptación visual — ventana del padre).

@@ -9,8 +9,11 @@
 // ImageSet.LoadBackgroundImages.
 //
 // Decoding is headless and uses the Go standard library: PNG, JPEG and GIF.
-// SVG is not supported: the element keeps an empty box and the run logs one
-// warning. WebP would need libwebp via cgo; its body is reported instead.
+// SVG is rasterized by package svg (the subset the codeberg icon set needs,
+// see that package's comment); its CSS size is the intrinsic size layout
+// reads, and its raster is kept at a fixed resolution so it stays sharp
+// when painted into a larger box. WebP would need libwebp via cgo; its body
+// is reported instead.
 //
 // A resource that fails (unreachable, over the size cap, unknown or
 // unsupported format) never aborts the render: it warns once through
@@ -22,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"math"
 	// The standard decoders register themselves with image.Decode; PNG, JPEG
 	// and GIF cover the formats the oracle decodes through gdk-pixbuf.
 	_ "image/gif"
@@ -35,6 +39,7 @@ import (
 
 	"browser-lite/dom"
 	blnet "browser-lite/net"
+	"browser-lite/svg"
 )
 
 // Hard cap on one image body. A body larger than this is rejected, not
@@ -48,13 +53,34 @@ const ImageTimeout = 20 * time.Second
 // Decompression-bomb guard: a 100x100 PNG can declare 40000x40000 pixels.
 const MaxImagePixels uint64 = 40_000_000
 
-// Image is one decoded image: non-premultiplied RGBA8, top-down,
-// Width*Height*4 bytes. Cairo wants premultiplied ARGB32, so paint converts
-// at draw time.
+// Image is one decoded image: non-premultiplied RGBA8, top-down. Cairo wants
+// premultiplied ARGB32, so paint converts at draw time.
+//
+// Width and Height are the image's intrinsic CSS size: layout sizes an
+// unhinted <img> from them. For raster formats they are also the pixel size
+// of RGBA (Width*Height*4 bytes). An SVG is rasterized at its own resolution,
+// so RGBA is RasterWidth x RasterHeight instead; RasterSize returns the
+// pixel size of RGBA either way.
 type Image struct {
 	Width  uint32
 	Height uint32
 	RGBA   []byte
+	// RasterWidth and RasterHeight are the pixel size of RGBA when it
+	// differs from Width and Height. Zero means RGBA is Width x Height.
+	RasterWidth  uint32
+	RasterHeight uint32
+	// KeepAspect fits the content into the layout box, keeping its aspect
+	// ratio and centring it (SVG preserveAspectRatio xMidYMid meet). Raster
+	// formats stretch to the box instead.
+	KeepAspect bool
+}
+
+// RasterSize is the pixel size of RGBA.
+func (i *Image) RasterSize() (uint32, uint32) {
+	if i.RasterWidth == 0 || i.RasterHeight == 0 {
+		return i.Width, i.Height
+	}
+	return i.RasterWidth, i.RasterHeight
 }
 
 // Limits is the per-run image profile, the counterpart of the oracle's
@@ -256,6 +282,11 @@ func (s *ImageSet) loadURL(url string, limits *Limits) *Image {
 	return result
 }
 
+// svgRasterSide is the longer side of an SVG's raster. It is fixed, not
+// derived from the layout box (decoding happens before layout), and large
+// enough that a box of a few hundred CSS pixels is still downscaled.
+const svgRasterSide = 512
+
 // Decode decodes one image body to RGBA, sniffing the format from its bytes.
 //
 // The Content-Type and the file extension are ignored on purpose: a
@@ -266,7 +297,7 @@ func Decode(body []byte) (*Image, error) {
 		return nil, errors.New("empty body")
 	}
 	if looksLikeSVG(body) {
-		return nil, errors.New("SVG images are not supported")
+		return decodeSVG(body)
 	}
 	if isWebP(body) {
 		// The oracle decodes WebP through libwebp (cgo); this port cannot,
@@ -290,6 +321,33 @@ func Decode(body []byte) (*Image, error) {
 		return nil, err
 	}
 	return imageFrom(src)
+}
+
+// decodeSVG rasterizes an SVG body. The intrinsic size is the document's CSS
+// size (width/height, or the viewBox), and the pixel guard applies to that
+// size like it does to rasters.
+func decodeSVG(body []byte) (*Image, error) {
+	doc, err := svg.Parse(body)
+	if err != nil {
+		return nil, err
+	}
+	cssW, cssH := doc.IntrinsicSize()
+	if !(cssW >= 1 && cssH >= 1) || cssW > math.MaxUint32 || cssH > math.MaxUint32 {
+		return nil, fmt.Errorf("SVG size %vx%v is out of range", cssW, cssH)
+	}
+	width, height := uint32(math.Round(cssW)), uint32(math.Round(cssH))
+	if pixels := uint64(width) * uint64(height); pixels > MaxImagePixels {
+		return nil, fmt.Errorf("%d pixels exceeds the %d pixel limit", pixels, MaxImagePixels)
+	}
+	rw, rh, rgba := doc.Render(svgRasterSide)
+	return &Image{
+		Width:        width,
+		Height:       height,
+		RGBA:         rgba,
+		RasterWidth:  uint32(rw),
+		RasterHeight: uint32(rh),
+		KeepAspect:   true,
+	}, nil
 }
 
 // imageFrom converts a decoded image to straight RGBA8 and enforces the

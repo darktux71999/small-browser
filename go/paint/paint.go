@@ -187,24 +187,33 @@ static void paint_surface_destroy(cairo_surface_t *s) {
 // repeat-y bands stay inside the image's other extent, §4.2); mode 3 is
 // no-repeat, one anchored instance (§4.1). Nearest keeps exact pixels, like
 // the oracle's Filter::Nearest.
+// iw x ih is the image's CSS size; the surface may be a finer raster of it
+// (an SVG), in which case the pattern scales the surface down to CSS units.
 static void paint_bg_image(paint_t *p, cairo_surface_t *img,
 		double x, double y, double w, double h,
-		double ox, double oy, int mode) {
+		double ox, double oy, int mode, double iw, double ih) {
+	double sx = cairo_image_surface_get_width(img) / iw;
+	double sy = cairo_image_surface_get_height(img) / ih;
 	cairo_save(p->cr);
 	cairo_rectangle(p->cr, x, y, w, h);
 	cairo_clip(p->cr);
 	if (mode == 1) {
 		// repeat-x: paint only the image's vertical band.
-		cairo_rectangle(p->cr, x, y + oy, w, cairo_image_surface_get_height(img));
+		cairo_rectangle(p->cr, x, y + oy, w, ih);
 		cairo_clip(p->cr);
 	} else if (mode == 2) {
 		// repeat-y: paint only the image's horizontal band.
-		cairo_rectangle(p->cr, x + ox, y, cairo_image_surface_get_width(img), h);
+		cairo_rectangle(p->cr, x + ox, y, iw, h);
 		cairo_clip(p->cr);
 	}
 	cairo_translate(p->cr, x + ox, y + oy);
 	cairo_pattern_t *pat = cairo_pattern_create_for_surface(img);
-	cairo_pattern_set_filter(pat, CAIRO_FILTER_NEAREST);
+	cairo_matrix_t m;
+	cairo_matrix_init_scale(&m, sx, sy);
+	cairo_pattern_set_matrix(pat, &m);
+	// Nearest keeps raster backgrounds pixel-exact; a scaled SVG raster is
+	// downsampled, which needs the filter.
+	cairo_pattern_set_filter(pat, sx == 1.0 && sy == 1.0 ? CAIRO_FILTER_NEAREST : CAIRO_FILTER_GOOD);
 	cairo_pattern_set_extend(pat, mode == 3 ? CAIRO_EXTEND_NONE : CAIRO_EXTEND_REPEAT);
 	cairo_set_source(p->cr, pat);
 	cairo_paint(p->cr);
@@ -560,13 +569,14 @@ func drawBackgroundImage(p *C.paint_t, b *layout.LayoutBox) {
 	case css.BackgroundRepeatNoRepeat:
 		mode = 3
 	}
-	s := rgbaSurface(image.RGBA, int(image.Width), int(image.Height))
+	rw, rh := image.RasterSize()
+	s := rgbaSurface(image.RGBA, int(rw), int(rh))
 	if s == nil {
 		return
 	}
 	defer C.paint_surface_destroy(s)
 	C.paint_bg_image(p, s, C.double(b.X), C.double(b.Y), C.double(b.W), C.double(b.H),
-		C.double(ox), C.double(oy), C.int(mode))
+		C.double(ox), C.double(oy), C.int(mode), C.double(iw), C.double(ih))
 }
 
 // backgroundOffset is one axis of the computed placement: a percentage of
@@ -592,22 +602,40 @@ func drawBackgroundGradient(p *C.paint_t, b *layout.LayoutBox) {
 		C.double(g.To.R), C.double(g.To.G), C.double(g.To.B), C.double(g.To.A))
 }
 
-// drawImage paints one <img> box's decoded pixels, scaled into the box.
+// drawImage paints one <img> box's decoded pixels, scaled into the box. A
+// KeepAspect image (SVG) is fitted into the box instead of stretched.
 func drawImage(p *C.paint_t, b *layout.LayoutBox) {
 	image := b.Image
-	if b.W <= 0 || b.H <= 0 || image.Width == 0 || image.Height == 0 {
+	rw, rh := image.RasterSize()
+	if b.W <= 0 || b.H <= 0 || rw == 0 || rh == 0 {
 		return
 	}
-	s := rgbaSurface(image.RGBA, int(image.Width), int(image.Height))
+	s := rgbaSurface(image.RGBA, int(rw), int(rh))
 	if s == nil {
 		return
 	}
 	defer C.paint_surface_destroy(s)
+	x, y, w, h := b.X, b.Y, b.W, b.H
+	if image.KeepAspect {
+		x, y, w, h = fitRect(x, y, w, h, rw, rh)
+	}
 	radii := resolveRadius(b)
 	C.paint_draw_image(p, s,
-		C.double(b.X), C.double(b.Y), C.double(b.W), C.double(b.H),
-		C.double(image.Width), C.double(image.Height),
+		C.double(x), C.double(y), C.double(w), C.double(h),
+		C.double(rw), C.double(rh),
 		C.double(radii[0]), C.double(radii[1]), C.double(radii[2]), C.double(radii[3]))
+}
+
+// fitRect is the xMidYMid meet placement of a iw x ih content box inside the
+// box x,y,w,h: the largest rectangle with the content's aspect ratio that
+// fits, centred on the box.
+func fitRect(x, y, w, h float64, iw, ih uint32) (float64, float64, float64, float64) {
+	if iw == 0 || ih == 0 {
+		return x, y, w, h
+	}
+	scale := math.Min(w/float64(iw), h/float64(ih))
+	fw, fh := float64(iw)*scale, float64(ih)*scale
+	return x + (w-fw)/2, y + (h-fh)/2, fw, fh
 }
 
 // rgbaSurface converts straight RGBA8 pixels to a Cairo ARGB32 surface,

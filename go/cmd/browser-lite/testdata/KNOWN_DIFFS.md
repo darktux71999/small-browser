@@ -172,3 +172,17 @@ resolves their insets against the nearest positioned ancestor (CSS 2.1 §§9.3.1
 flow boxes. The focused `abs-position.html` fixture therefore differs by design.
 Flex/grid static positions, positioned auto margins, and z-index stacking are
 documented approximations or are not modeled.
+
+## Category: SVG rendering (meta1 front, img/svg)
+
+The Go engine now rasterizes SVG `<img src>` and CSS background images
+through `go/svg` (a KISS subset: paths, basic shapes, solid fills and
+strokes, transforms, a `<style>` block; gradients paint their average stop
+colour). The frozen Rust oracle warns `SVG images are not supported` and
+keeps an empty box, so **by design** any fixture that references an SVG
+image diverges from it: `img-svg.html` and `probe-svg-img.html` change
+their stderr and, for `img-svg.html`, their PNG bytes. Inline `<svg>`
+elements are not painted by either engine's image path and are unchanged.
+Dropped features are listed in the `go/svg` package comment. Reference:
+`odd/tasks/meta1-codeberg.md` (SVG defect family). Orthogonal to the
+categories above, which are unchanged.
