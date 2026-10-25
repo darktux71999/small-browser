@@ -24,6 +24,10 @@ func TestDumpHelloExact(t *testing.T) {
 	if stderr.String() != "" {
 		t.Fatalf("stderr: %q", stderr.String())
 	}
+	// S3 (leading-fidelity): body/p margins now collapse per CSS 2.1 §8.3.1
+	// (UA body 8px folds with the p's 16px block margins into one 16px
+	// margin above the body border; the p sits at the body content top).
+	// The old golden summed them (body at 8, p at 24, height 68).
 	want := `DOM
 #document
   html
@@ -35,11 +39,11 @@ func TestDumpHelloExact(t *testing.T) {
     body
       p#t
         #text "hello lite"
-LAYOUT 1000x68
-  [   0.0    0.0 1000.0   68.0] html
-  [   8.0    8.0  984.0   52.0] body
-  [   8.0   24.0  984.0   20.0] p
-  [   8.0   22.1   64.0   21.0] #text "hello lite"
+LAYOUT 1000x52
+  [   0.0    0.0 1000.0   36.0] html
+  [   8.0   16.0  984.0   20.0] body
+  [   8.0   16.0  984.0   20.0] p
+  [   8.0   14.1   64.0   21.0] #text "hello lite"
 title: hello
 `
 	if stdout.String() != want {

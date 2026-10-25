@@ -61,3 +61,15 @@ runs, or text only created by scripts the Go engine does not evaluate):
 the stderr-only QuickJS rows above), `net-latin1`. Spec and divergence
 decision: `odd/tasks/leading-fidelity.md` (S1). This category is
 orthogonal to the 9 QuickJS rows above, which are unchanged.
+
+## Category: margin collapsing (leading-fidelity S3)
+
+The Go engine now collapses vertical margins per CSS 2.1 §8.3.1 in the
+block formatting context only (adjacent siblings, parent/first-child and
+parent/last-child pass-through at auto height, empty blocks; never across
+borders, padding, line boxes, and never between flex/grid items). The
+frozen Rust oracle never collapses margins anywhere, so **by design** any
+fixture with adjoining vertical block margins now diverges from the oracle
+in its layout stream (and any text-position-sensitive paint output).
+Reference: `odd/tasks/leading-fidelity.md` (S3). Orthogonal to the two
+categories above, which are unchanged.

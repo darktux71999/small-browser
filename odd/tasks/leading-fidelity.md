@@ -37,7 +37,7 @@ runner `go test ./...` + runner diferencial (con divergencias documentadas).
 |---|---|---|---|---|
 | T1 | line-height absoluto (helper único text+paint) + KNOWN_DIFFS | S1 | delegado (ling-3.1-flash) | ✅ (179+108 subtests en verde; vivo 1000x2479 = −457px; differential 5 idénticos registrados) |
 | T2 | política noscript (colección + pintado) | S2 | delegado (qwen3.8-flash) | ✅ (187+113 subtests verdes; vivo 1000x2317 = −162px; banner verificado ausente) |
-| T3 | colapso de márgenes verticales | S3 | delegado | pendiente |
+| T3 | colapso de márgenes verticales | S3 | delegado (muse-spark-1.3-contributor) | ✅ (197+113 subtests; vivo 1000x2297 = −20px; flex/grid byte-idénticos) |
 | T4 | re-medición S7 + informe | S4 | medición | pendiente |
 
 ## Log
@@ -91,3 +91,31 @@ runner `go test ./...` + runner diferencial (con divergencias documentadas).
   187+113 subtests, 10/10 paquetes; vet/gofmt limpios. Nota: el costo real del
   banner fue −162px (predicción −178/−200) — el residuo se cuantifica en T4.
   `Risk: none`.
+- **L4** (2026-10-25): **S3 aterrizada** (T3, muse-spark). Colapso CSS 2.1
+  §8.3.1 en el formato de bloque: hermanos adyacentes, pass-through
+  padre/hijo (top siempre; bottom con altura auto y sin borde/padding inferior),
+  auto-pliegue de bloques vacíos y combinaciones con negativos — todo por un
+  combinador asociativo único (`max(positivos) + min(negativos)`). Punto único
+  de implementación en el stacking de bloque (`layout.go`: `collapsePair`,
+  `firstCollapseTop`/`lastCollapseBottom`, `collapsedTop/BottomMargin`); una
+  «legacy shell» mantiene root y los items flex/grid sin colapso de padre —
+  `flex.go`/`grid.go` intactos byte a byte (verificado con dumps T2-vs-S3).
+  **Efecto vivo: solo −20px** (2317→2297, concentrado en el footer) — la
+  estimación de P9a (~150-230px) **sobrevaloraba** los márgenes colapsables: el
+  ritmo de la página vive en filas flex, donde CSS prohíbe el colapso. El
+  corpus sí diverge ampliamente (70/71 DIFF vs oráculo; border-radius,
+  img-attrs, img-clamp pasan a DIFF por diseño — sus fixtures tienen márgenes
+  que ahora colapsan; net-latin1 sigue idéntico; js-dom solo-stderr sin
+  cambios). 10 tests nuevos (7 reglas + pin de borde + 2 pins de preservación
+  flex/grid + regresión de whitespace — un run de texto inicial se hacía pasar
+  por primer participante y clavaba el borde 2px alto). Golden
+  `TestDumpHelloExact` re-baselineado de nuevo con cita S3 (autorizado por la
+  tarea: «update ONLY with spec citation» — misma línea que la opción 1 del
+  usuario en T1). 197+113 subtests, 10/10; vet/gofmt limpios. Riesgo honesto
+  item-3: el stacking de bloque es código compartido; el colapso también pliega
+  dentro de subramas de items flex/grid (spec-correcto: los items establecen
+  flujo de bloque ordinario para sus hijos) — ningún test ni caja se movió.
+  Esquinas documentadas: sin `overflow`/floats/clearance en el Style (inaplicable,
+  no omitido); bloque con altura definida no hace auto-pliegue (desviación menor).
+  `Risk: item 3 (stacking de bloque compartido — comportamiento preservado y
+  pinneado; flex/grid byte-idénticos)`.

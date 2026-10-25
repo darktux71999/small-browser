@@ -126,6 +126,38 @@ func max(a, b float64) float64 {
 	return b
 }
 
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// collapsePair combines two adjoining vertical margins into one per CSS 2.1
+// §8.3.1 (leading-fidelity S3): the largest positive margin plus the most
+// negative one; a side with no positive (or no negative) margin contributes
+// zero. Pairwise combination is associative, so sibling chains, empty
+// blocks, and parent/child pass-through all fold through this one function.
+func collapsePair(a, b float64) float64 {
+	pos := max(a, 0)
+	if b > pos {
+		pos = b
+	}
+	neg := min(a, 0)
+	if b < neg {
+		neg = b
+	}
+	return pos + neg
+}
+
+// blockResult is the laid-out geometry of a block-level box in a collapsing
+// context: the border edges plus the adjoining (possibly collapsed) margins
+// above and below, per CSS 2.1 §8.3.1 (leading-fidelity S3).
+type blockResult struct {
+	borderTop, borderBottom float64
+	top, bottom             float64
+}
+
 // layoutNode lays out one node and returns the space it takes in the flow
 // (border height plus vertical margins). It mirrors the block path of
 // layout_node (src/layout.rs:156-303): display:none takes nothing, replaced
@@ -154,12 +186,170 @@ func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID
 		return st.layoutGridContainer(doc, styles, id, originX, originY, availableWidth, f)
 	}
 
+	// The block path collapses vertical margins (CSS 2.1 §8.3.1,
+	// leading-fidelity S3). layoutNode keeps the legacy shell: the box sits
+	// at its own top margin and reports border plus both margins, so the
+	// root, flex/grid item, and measure contexts see no parent collapsing —
+	// only the sibling chain inside folds.
+	res := st.layoutBlock(doc, styles, id, originX, originY, availableWidth, f, false)
+	return res.borderBottom - res.borderTop + res.top + res.bottom
+}
+
+// firstCollapseTop finds the first in-flow block-level participant under id
+// (a block box or a replaced image laid out on its own line; flex and grid
+// containers count as block-level but never collapse through) and reports
+// its adjoining top margin. leadText reports inline content before that
+// participant: flushed line boxes separate margins, so they block any
+// parent/first-child collapse (CSS 2.1 §8.3.1). display:none and noscript
+// subtrees contribute nothing and are skipped exactly like the main loop
+// skips them.
+func firstCollapseTop(doc *dom.Document, styles []css.Style, id dom.NodeID) (top float64, found bool, leadText bool) {
+	var run strings.Builder
+	for _, child := range doc.Nodes[id].Children {
+		childStyle := &styles[child]
+		if childStyle.Display == css.DisplayNone || isNoscript(doc, child) {
+			continue
+		}
+		if isImage(doc, child) {
+			// Images ride their own line, so their own margin adjoins.
+			return childStyle.Margin[0], true, strings.TrimSpace(run.String()) != ""
+		}
+		if childStyle.Display == css.DisplayBlock {
+			if childStyle.Flex != nil || childStyle.Grid != nil {
+				// Flex/grid containers are block-level but open a new
+				// formatting context, so only their own margin adjoins.
+				return childStyle.Margin[0], true, strings.TrimSpace(run.String()) != ""
+			}
+			return collapsedTopMargin(styles, doc, child), true, strings.TrimSpace(run.String()) != ""
+		}
+		// Inline content (elements and text runs): a non-blank run
+		// flushes line boxes that separate the margins.
+		collectInlineText(doc, child, &run)
+	}
+	return 0, false, strings.TrimSpace(run.String()) != ""
+}
+
+// lastCollapseTop mirrors firstCollapseTop from the other end: the last
+// in-flow block-level participant and whether inline content follows it.
+func lastCollapseBottom(doc *dom.Document, styles []css.Style, id dom.NodeID) (bottom float64, found bool, trailText bool) {
+	children := doc.Nodes[id].Children
+	var run strings.Builder
+	for i := len(children) - 1; i >= 0; i-- {
+		child := children[i]
+		childStyle := &styles[child]
+		if childStyle.Display == css.DisplayNone || isNoscript(doc, child) {
+			continue
+		}
+		if isImage(doc, child) {
+			return childStyle.Margin[2], true, strings.TrimSpace(run.String()) != ""
+		}
+		if childStyle.Display == css.DisplayBlock {
+			if childStyle.Flex != nil || childStyle.Grid != nil {
+				return childStyle.Margin[2], true, strings.TrimSpace(run.String()) != ""
+			}
+			auto := styles[child].Height == nil
+			return collapsedBottomMargin(styles, doc, child, auto), true, strings.TrimSpace(run.String()) != ""
+		}
+		// Inline content (elements and text runs): a non-blank run
+		// flushes line boxes that separate the margins.
+		collectInlineText(doc, child, &run)
+	}
+	return 0, false, strings.TrimSpace(run.String()) != ""
+}
+
+// collapsedTopMargin is the margin adjoining the border-top edge of id: its
+// own top margin collapsed with the first in-flow block-level child's,
+// recursively (CSS 2.1 §8.3.1). A top border, top padding, or line boxes
+// before the first participant stop the collapse.
+func collapsedTopMargin(styles []css.Style, doc *dom.Document, id dom.NodeID) float64 {
+	style := &styles[id]
+	if style.BorderWidth[0] != 0 || style.Padding[0] != 0 {
+		return style.Margin[0]
+	}
+	top, found, lead := firstCollapseTop(doc, styles, id)
+	if found && !lead {
+		return collapsePair(style.Margin[0], top)
+	}
+	if !found && !lead && style.Height == nil &&
+		style.BorderWidth[2] == 0 && style.Padding[2] == 0 {
+		// Empty: the box's own margins adjoin each other, so they fold
+		// together here too, letting the parent place the zero-height
+		// box on the single collapsed margin.
+		if _, foundB, trail := lastCollapseBottom(doc, styles, id); !foundB && !trail {
+			return collapsePair(style.Margin[0], style.Margin[2])
+		}
+	}
+	return style.Margin[0]
+}
+
+// collapsedBottomMargin mirrors collapsedTopMargin for the border-bottom
+// edge. It additionally needs auto height: a definite height pins the
+// content box, so the last child's margin stays inside (CSS 2.1 §8.3.1).
+// The engine models no overflow property, so every auto-height box counts
+// as visible overflow here; clearance is unmodeled (no floats), so no child
+// ever carries it.
+func collapsedBottomMargin(styles []css.Style, doc *dom.Document, id dom.NodeID, auto bool) float64 {
+	style := &styles[id]
+	if !auto || style.BorderWidth[2] != 0 || style.Padding[2] != 0 {
+		return style.Margin[2]
+	}
+	bottom, found, trail := lastCollapseBottom(doc, styles, id)
+	if found && !trail {
+		return collapsePair(style.Margin[2], bottom)
+	}
+	if !found && !trail && style.BorderWidth[0] == 0 && style.Padding[0] == 0 {
+		// Empty: mirror of the top walk's self-fold.
+		if _, foundF, lead := firstCollapseTop(doc, styles, id); !foundF && !lead {
+			return collapsePair(style.Margin[0], style.Margin[2])
+		}
+	}
+	return style.Margin[2]
+}
+
+// layoutBlock lays out a block-level box and its in-flow children with
+// vertical margin collapsing (CSS 2.1 §8.3.1, leading-fidelity S3):
+// adjoining sibling margins fold to one, the parent's top/bottom margins
+// fold with the first/last child's when no border, padding, or line boxes
+// separate them (the bottom only at auto height), and an empty block folds
+// its own margins into the chain. throughTop selects the block-context
+// placement (the first participant's margin is consumed above the parent
+// border) versus the legacy shell (margins never collapse with the parent;
+// the root, flex/grid item, and measure contexts). Sibling collapsing
+// applies in both: children of any block container share one block flow.
+// Flex and grid children keep their own layout and contribute only their
+// raw margins — their inner algorithms are untouched. The T11 box model is
+// untouched: only the stacking offsets change, never the content-box math.
+func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeID, originX, originY, availableWidth float64, f forced, throughTop bool) blockResult {
+	style := &styles[id]
 	content := computeContentBox(style, originX, originY, availableWidth, f)
 	borderX, borderW := content.borderX, content.borderW
 	contentX, contentW := content.x, content.w
 
-	borderY := originY + style.Margin[0]
-	cursorY := content.y
+	top := style.Margin[0]
+	collapseFirst := false
+	emptyThrough := false
+	if throughTop && style.BorderWidth[0] == 0 && style.Padding[0] == 0 {
+		firstTop, found, lead := firstCollapseTop(doc, styles, id)
+		switch {
+		case found && !lead:
+			top = collapsePair(top, firstTop)
+			collapseFirst = true
+		case !found && !lead && style.Height == nil && f.height == nil &&
+			style.BorderWidth[2] == 0 && style.Padding[2] == 0:
+			// An empty block's own margins adjoin each other and the
+			// chain: they fold into one margin straddling the
+			// zero-height box. Only in the collapsing context: a
+			// summing parent (flex/grid item, root, measure) keeps the
+			// plain sum, exactly as before.
+			if _, foundB, trail := lastCollapseBottom(doc, styles, id); !foundB && !trail {
+				top = collapsePair(top, style.Margin[2])
+				emptyThrough = true
+			}
+		}
+	}
+
+	borderY := originY + top
+	cursorY := borderY + style.BorderWidth[0] + style.Padding[0]
 
 	// Placeholder so children find a stable index; height filled after flow.
 	boxIndex := len(st.out.Boxes)
@@ -181,26 +371,86 @@ func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID
 		BorderRadius:    style.BorderRadius,
 	})
 
+	// place resolves one participant's margin-adjoining origin: the pending
+	// bottom margin folds with this child's top margin, unless flushed line
+	// boxes separate them (then both margins are expressed in full), or
+	// this is the consumed first child (its margin already sits above the
+	// parent border).
 	var run strings.Builder
+	cursor := cursorY
+	var pending float64
+	hasPending := false
+	seenFirst := false
+	place := func(childTop float64) float64 {
+		textH := st.flushText(style, contentX, cursor, contentW, &run)
+		var at float64
+		switch {
+		case textH > 0:
+			if hasPending {
+				cursor += pending
+				hasPending = false
+			}
+			cursor += textH
+			at = cursor
+		case !seenFirst && collapseFirst:
+			at = cursor - childTop
+		case hasPending:
+			at = cursor + collapsePair(pending, childTop) - childTop
+		default:
+			at = cursor
+		}
+		seenFirst = true
+		return at
+	}
+
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
 		switch {
-		case childStyle.Display == css.DisplayNone:
+		case childStyle.Display == css.DisplayNone || isNoscript(doc, child):
 		case isImage(doc, child):
 			// A replaced element takes its own line in this block flow,
 			// so the text collected so far is flushed above it.
-			cursorY += st.flushText(style, contentX, cursorY, contentW, &run)
-			cursorY += st.layoutNode(doc, styles, child, contentX, cursorY, contentW, forced{})
+			at := place(childStyle.Margin[0])
+			total := st.layoutImage(doc, styles, child, contentX, at, contentW, forced{})
+			borderH := total - childStyle.Margin[0] - childStyle.Margin[2]
+			cursor = at + childStyle.Margin[0] + borderH
+			pending, hasPending = childStyle.Margin[2], true
+		case childStyle.Display == css.DisplayBlock && childStyle.Flex == nil && childStyle.Grid == nil:
+			childTop := collapsedTopMargin(styles, doc, child)
+			at := place(childTop)
+			res := st.layoutBlock(doc, styles, child, contentX, at, contentW, forced{}, true)
+			cursor = res.borderBottom
+			pending, hasPending = res.bottom, true
 		case childStyle.Display == css.DisplayBlock:
-			cursorY += st.flushText(style, contentX, cursorY, contentW, &run)
-			cursorY += st.layoutNode(doc, styles, child, contentX, cursorY, contentW, forced{})
+			// A flex or grid container is block-level: its own margins
+			// adjoin like any block's, but its inner layout never
+			// collapses through.
+			at := place(childStyle.Margin[0])
+			total := st.layoutNode(doc, styles, child, contentX, at, contentW, forced{})
+			borderH := total - childStyle.Margin[0] - childStyle.Margin[2]
+			cursor = at + childStyle.Margin[0] + borderH
+			pending, hasPending = childStyle.Margin[2], true
 		default:
 			collectInlineText(doc, child, &run)
 		}
 	}
-	cursorY += st.flushText(style, contentX, cursorY, contentW, &run)
+	tailH := st.flushText(style, contentX, cursor, contentW, &run)
 
-	borderH := cursorY - borderY + style.Padding[2] + style.BorderWidth[2]
+	bottom := style.Margin[2]
+	contentBottom := cursor
+	auto := style.Height == nil && f.height == nil
+	if hasPending && (tailH > 0 || style.BorderWidth[2] != 0 || style.Padding[2] != 0 || !auto) {
+		// Separated from the parent's bottom margin: expressed inside.
+		contentBottom += pending
+	} else if hasPending {
+		bottom = collapsePair(bottom, pending)
+	}
+	if emptyThrough {
+		bottom = top
+	}
+	contentBottom += tailH
+
+	borderH := contentBottom - borderY + style.Padding[2] + style.BorderWidth[2]
 	if style.Height != nil {
 		borderH = max(borderH, *style.Height)
 	}
@@ -209,7 +459,7 @@ func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID
 	}
 	st.out.Boxes[boxIndex].H = max(borderH, 0)
 
-	return borderH + style.Margin[0] + style.Margin[2]
+	return blockResult{borderTop: borderY, borderBottom: borderY + max(borderH, 0), top: top, bottom: bottom}
 }
 
 // contentBox is the box model of a block-level element: the rectangle its
