@@ -11,9 +11,9 @@ import (
 // sees it:
 //
 //   - the gap properties (libcss 0.9.2 knows column-gap but neither the gap
-//     shorthand nor row-gap) are rewritten into the min-width (row gap) and
-//     max-width (column gap) carriers, and the author's own min/max widths
-//     are dropped to leave the carriers free;
+//     shorthand nor row-gap) are rewritten into the min-width row-gap carrier
+//     and native column-gap property; min-width is dropped to leave its
+//     carrier free, while max-width remains available for layout;
 //   - font-family declarations are normalised: every unquoted multi-word
 //     name gains quotes, and a family list without a generic keyword gains
 //     the implicit sans-serif tail (libcss 0.9.2 quirks: the generic status
@@ -26,7 +26,7 @@ import (
 // Everything else is copied verbatim, byte for byte.
 
 // RewriteGapCarriers rewrites the gap declarations of a rule list so the
-// engine can read them, and drops the author's own min-width/max-width.
+// engine can read them, and drops the author's own min-width carrier.
 func RewriteGapCarriers(css string) string {
 	var out strings.Builder
 	out.Grow(len(css))
@@ -170,8 +170,8 @@ func rewriteDeclarations(src string, out *strings.Builder, cap *capture, selecto
 // rewriteDeclaration rewrites one declaration: the custom-property side
 // table wins first — a --* or var() declaration is captured and leaves
 // no text behind for libcss (which would discard it anyway) — then the
-// gap properties become the carriers, the author's minimum/maximum
-// widths are dropped, and font-family is normalised (mirroring
+// gap properties become a min-width carrier and native column-gap, the
+// author's min-width carrier is dropped, and font-family is normalised (mirroring
 // rewrite_declaration).
 func rewriteDeclaration(decl string, out *strings.Builder, cap *capture, selector string) {
 	property, value, ok := SplitDeclaration(decl)
@@ -254,12 +254,11 @@ func rewriteDeclaration(decl string, out *strings.Builder, cap *capture, selecto
 			}
 		}
 		if hasColumn {
-			writeCarrier(out, "max-width", column, important)
+			writeCarrier(out, "column-gap", column, important)
 		}
-	case
-		// The engine has no minimum/maximum sizing: these declarations are
-		// inert, and the carriers need the room.
-		"min-width", "max-width":
+	case "min-width":
+		// min-width is the row-gap carrier; the engine does not yet map the
+		// authored minimum width.
 	case
 		// libcss 0.9.2 drops the whole declaration when an unquoted family
 		// sequence contains another identifier that a generic keyword

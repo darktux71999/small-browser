@@ -57,7 +57,7 @@ func TestCaptureSheetExtractsSideTable(t *testing.T) {
 		{
 			"the gap rewrite keeps working beside a captured declaration",
 			"#x { display: flex; gap: 20px; border: var(--c) }",
-			"#x { display: flex;min-width:20px;max-width:20px;}",
+			"#x { display: flex;min-width:20px;column-gap:20px;}",
 			[]CustomDecl{{
 				Property: "border", Value: "var(--c)",
 				Selector: "#x", Order: 0,

@@ -54,6 +54,22 @@ func getPaddingLeft(s *C.css_computed_style, l *C.css_fixed, u *C.css_unit) C.ui
 	return C.css_computed_padding_left(s, l, u)
 }
 
+func getTop(s *C.css_computed_style, l *C.css_fixed, u *C.css_unit) C.uint8_t {
+	return C.css_computed_top(s, l, u)
+}
+
+func getRight(s *C.css_computed_style, l *C.css_fixed, u *C.css_unit) C.uint8_t {
+	return C.css_computed_right(s, l, u)
+}
+
+func getBottom(s *C.css_computed_style, l *C.css_fixed, u *C.css_unit) C.uint8_t {
+	return C.css_computed_bottom(s, l, u)
+}
+
+func getLeft(s *C.css_computed_style, l *C.css_fixed, u *C.css_unit) C.uint8_t {
+	return C.css_computed_left(s, l, u)
+}
+
 func getMinWidth(s *C.css_computed_style, l *C.css_fixed, u *C.css_unit) C.uint8_t {
 	return C.css_computed_min_width(s, l, u)
 }
@@ -244,10 +260,8 @@ func rgba(c C.css_color) Color {
 	}
 }
 
-// flexStyle reads the flex container properties of a computed style. The
-// gap values travel in the carriers (see the rewriter): min-width is the
-// row gap, max-width the column gap (libcss' own column-gap is the
-// fallback for declarations the rewrite did not reach).
+// flexStyle reads the flex container properties of a computed style. Row-gap
+// travels in the min-width carrier; column-gap is computed natively by libcss.
 func flexStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx) *FlexStyle {
 	flex := &FlexStyle{}
 	switch uint8(C.css_computed_flex_direction(style)) {
@@ -290,11 +304,7 @@ func flexStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx) *FlexStyle 
 		flex.Align = AlignItemsStretch
 	}
 	flex.RowGap, _ = lengthPx(style, unitCtx, getMinWidth, cssMinWidthSet)
-	column, hadColumn := lengthPx(style, unitCtx, getMaxWidth, cssMaxWidthSet)
-	if !hadColumn {
-		column, _ = lengthPx(style, unitCtx, getColumnGap, cssColumnGapSet)
-	}
-	flex.ColumnGap = column
+	flex.ColumnGap, _ = lengthPx(style, unitCtx, getColumnGap, cssColumnGapSet)
 	return flex
 }
 
@@ -423,16 +433,27 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 		out.Display = DisplayBlock
 		out.Grid = &GridStyle{}
 	}
-	out.GridItem = GridItemProps{ColSpan: 1, RowSpan: 1}
-	// The gaps travel in the min-width (row) and max-width (column)
-	// carriers for every element, not just flex containers: grid reuses
-	// the same values instead of re-parsing gap. See flexStyle.
-	out.RowGap, _ = lengthPx(style, unitCtx, getMinWidth, cssMinWidthSet)
-	column, hadColumn := lengthPx(style, unitCtx, getMaxWidth, cssMaxWidthSet)
-	if !hadColumn {
-		column, _ = lengthPx(style, unitCtx, getColumnGap, cssColumnGapSet)
+	out.PositionRelative = uint8(C.css_computed_position(style)) == cssPositionRelative
+	out.DirectionRTL = uint8(C.css_computed_direction(style)) == cssDirectionRTL
+	if out.PositionRelative {
+		if value, ok := lengthPx(style, unitCtx, getTop, cssInsetSet); ok {
+			out.RelativeTop = &value
+		}
+		if value, ok := lengthPx(style, unitCtx, getRight, cssInsetSet); ok {
+			out.RelativeRight = &value
+		}
+		if value, ok := lengthPx(style, unitCtx, getBottom, cssInsetSet); ok {
+			out.RelativeBottom = &value
+		}
+		if value, ok := lengthPx(style, unitCtx, getLeft, cssInsetSet); ok {
+			out.RelativeLeft = &value
+		}
 	}
-	out.ColumnGap = column
+	out.GridItem = GridItemProps{ColSpan: 1, RowSpan: 1}
+	// Row gap travels in the min-width carrier for every element, not just
+	// flex containers: grid reuses the same value instead of re-parsing gap.
+	out.RowGap, _ = lengthPx(style, unitCtx, getMinWidth, cssMinWidthSet)
+	out.ColumnGap, _ = lengthPx(style, unitCtx, getColumnGap, cssColumnGapSet)
 	out.FlexItem = flexItem(style, unitCtx)
 
 	if width, ok := lengthPx(style, unitCtx, getWidth, cssWidthSet); ok {
@@ -441,9 +462,16 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 	if height, ok := lengthPx(style, unitCtx, getHeight, cssHeightSet); ok {
 		out.Height = &height
 	}
+	out.BorderBox = uint8(C.css_computed_box_sizing(style)) == cssBoxSizingBorder
+	if maxWidth, ok := lengthPx(style, unitCtx, getMaxWidth, cssMaxWidthSet); ok {
+		out.MaxWidth = &maxWidth
+	}
 
 	margins := [4]lengthGetter{getMarginTop, getMarginRight, getMarginBottom, getMarginLeft}
 	for i, get := range margins {
+		var length C.css_fixed
+		var unit C.css_unit
+		out.MarginAuto[i] = get(style, &length, &unit) == C.uint8_t(cssMarginAuto)
 		value, ok := lengthPx(style, unitCtx, get, cssMarginSet)
 		if !ok {
 			value = 0

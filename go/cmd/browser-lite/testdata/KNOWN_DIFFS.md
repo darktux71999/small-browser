@@ -136,3 +136,30 @@ px), and the card band carries the dropped-stop approximation plus the
 pre-existing unmodelled `top:-7em`/`max-width:950px` card geometry
 (+2892 px). Reference: `odd/tasks/meta1-codeberg.md` (S10/L22). Orthogonal
 to the categories above, which are unchanged.
+
+## Category: constrained and relative boxes (meta1 S10/L24)
+
+The Go engine now preserves and applies `max-width` (CSS 2.1 §10.4), including
+auto-margin centering and computed `box-sizing:border-box`, and shifts
+`position:relative` boxes by their insets without changing normal flow (CSS 2.1
+§9.4.3). The frozen Rust oracle shares both gaps, so pages exercising these
+declarations diverge in box geometry and potentially paint. The current
+78-fixture corpus has no max-width sizing or relative-position declaration
+(`css-media.html` uses max-width only as a media feature); old-Go vs new-Go is
+byte-identical for all 78 fixtures. Reference: `odd/tasks/meta1-codeberg.md`
+(L24). This category is orthogonal to the existing entries.
+
+## Category: custom properties and var() (var-custom-properties S1-S3)
+
+The Go engine captures and resolves CSS custom properties and `var()` values
+(the 406 Codeberg `border: 1px solid var(--color-*)` declarations paint); the
+frozen oracle's libcss 0.9.2 discards every declaration whose value contains
+`var()`. Fixtures exercising custom properties (`var-border.html`) diverge by
+design. See odd/tasks/var-custom-properties.md.
+
+## Category: rem/em radius units (var-custom-properties S4)
+
+The Go engine resolves `rem`/`em` in `border-radius` (Forgejo's
+`.28571429rem` resolves to 4.57px at the 16px root); the frozen oracle
+degrades non-px radius units to zero. `radius-rem-em.html` diverges by
+design. See odd/tasks/var-custom-properties.md.

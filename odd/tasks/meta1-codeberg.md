@@ -540,3 +540,22 @@ sería bug de anchura de caja y se corrige ahí.
   correctamente, atribución L24), 0 (25.27%) y 7 (21.45%). Caveat de
   re-binning aplicado (G 2297→1942: los índices no son 1:1; los robustos son
   AE total y fase). **S7: a una banda del objetivo histórico.**
+- **L27** (2026-10-25): **Geometría de cards ARREGLADA** (P11, gpt-6-luna —
+  primera prueba del modelo, sin veredicto de perfil a petición del usuario).
+  Investigación con raíz no obvia: el `max-width: 950px` **lo descartaba el
+  rewriter** (`CaptureSheet` emitía `#card {}` — libcss nunca veía la
+  declaración) y, encima, el mapping usaba `css_computed_max_width()` como
+  carrier de `column-gap` (colisión con el getter). Fixes: max-width preservado
+  en el rewriter, `column-gap` movido a la propiedad nativa de libcss, mapping
+  de max-width/`box-sizing`/auto-márgenes/inserts de posición, geometría §10.4
+  + desplazamientos relativos §9.4.3 flujo-neutrales (con precedencia de
+  insets LTR/RTL). El `box-sizing: border-box` global de Codeberg resultó
+  necesario para que 950 sea el ancho exterior. **En vivo**: la card pasa a
+  `x=25, w=950` (era 1000) con el `-7em` aplicado (y=528 vs 640 de flujo, las
+  estadísticas siguen en su sitio) · `LAYOUT 1000x1967`. AE de la región card
+  vs Firefox: 26.9% (las métricas de la card quedan como frente). Corpus
+  **78 fixtures** (71+7 de P11b): 77 DIFF + net-latin1 — base-vs-cambio 78/78
+  idénticos (cero regresiones). 8 tests nuevos (incl. LTR/RTL). **KNOWN_DIFFS**:
+  categoría de cajas relativas/constrained añadida + las dos pendientes de
+  `var()` y `rem/em` (prometidas en el commit de P11b). `Risk: item 6`
+  (aceptación visual con ojos humanos — la ventana la abre el padre).

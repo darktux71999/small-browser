@@ -114,8 +114,8 @@ type FlexStyle struct {
 	// RowGap is the gap between the lines of the container, in CSS pixels,
 	// taken from the min-width carrier.
 	RowGap float64
-	// ColumnGap is the gap between the items of a line, in CSS pixels,
-	// taken from the max-width carrier (or libcss' own column-gap).
+	// ColumnGap is the gap between items of a line, in CSS pixels, taken
+	// from libcss' native computed column-gap.
 	ColumnGap float64
 }
 
@@ -266,12 +266,28 @@ func RadiusPercent(pct float64) Radius { return Radius{Percent: true, Value: pct
 type Style struct {
 	// Display: Block/Inline/None (flex and grid containers keep Block).
 	Display Display
-	// Width/Height in CSS pixels; nil when not set (auto, percentage).
-	Width  *float64
-	Height *float64
+	// Width/Height/MaxWidth in CSS pixels; nil when not set (auto,
+	// percentage, or max-width:none).
+	Width    *float64
+	Height   *float64
+	MaxWidth *float64
+	// BorderBox means CSS width/max-width include horizontal padding and
+	// borders (computed box-sizing:border-box).
+	BorderBox bool
 	// Margin and padding, top/right/bottom/left, in CSS pixels.
 	Margin  [4]float64
 	Padding [4]float64
+	// MarginAuto preserves which margin sides were specified as auto so
+	// block layout can distribute positive leftover inline space.
+	MarginAuto [4]bool
+	// Relative positioning (CSS 2.1 §9.4.3). Insets are CSS pixels; nil is
+	// auto/unresolved. Layout applies these after normal flow placement.
+	PositionRelative bool
+	DirectionRTL     bool
+	RelativeTop      *float64
+	RelativeRight    *float64
+	RelativeBottom   *float64
+	RelativeLeft     *float64
 	// Borders (T11): per-side widths in CSS pixels; styles (only solid
 	// paints today); colours; corner radii as specified. A used width of
 	// zero is reported where the style is none: no border paints even
@@ -352,8 +368,7 @@ type Style struct {
 	// carrier the same way the flex gaps travel.
 	RowGap float64
 	// ColumnGap is the column gap between grid tracks (and flex items of a
-	// row container) in CSS pixels; the max-width carrier, or libcss' own
-	// column-gap.
+	// row container) in CSS pixels, read from libcss' native computed value.
 	ColumnGap float64
 }
 

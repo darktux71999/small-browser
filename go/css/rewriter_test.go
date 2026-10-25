@@ -4,14 +4,14 @@ import "testing"
 
 // The rewriter is ported verbatim in behaviour from
 // src/css_libcss.rs (rewrite_gap_carriers et al): the gap
-// declarations travel in the min-width (row) and max-width (column)
-// carriers, the author's own min/max widths are dropped, the rest of the
+// declarations travel in the min-width (row) carrier and native column-gap,
+// the author's own min-width is dropped while max-width is retained, the rest of the
 // stylesheet is copied byte for byte, and @font-face never reaches libcss.
 // The expectations below mirror the Rust rewriter traced rule by rule:
 // a substituted declaration is written WITHOUT the whitespace that
 // surrounded the author's declaration (the carriers carry no surrounding
 // spaces), while untouched declarations and trivia are copied verbatim.
-// Each case pins the two-carrier separator and the verbatim passthrough.
+// Each case pins the row-carrier/native-column-gap separator and the verbatim passthrough.
 
 type rewriteCase struct {
 	name string
@@ -31,14 +31,14 @@ func runRuleListCases(t *testing.T, cases []rewriteCase) {
 func TestGapCarrierRewrites(t *testing.T) {
 	runRuleListCases(t, []rewriteCase{
 		{
-			"gap shorthand one value writes both carriers",
+			"gap shorthand writes row carrier and native column gap",
 			"#gap { display: flex; gap: 20px }",
-			"#gap { display: flex;min-width:20px;max-width:20px}",
+			"#gap { display: flex;min-width:20px;column-gap:20px}",
 		},
 		{
 			"gap shorthand two values splits across the carriers",
 			"#gap { gap: 10px 20px }",
-			"#gap {min-width:10px;max-width:20px}",
+			"#gap {min-width:10px;column-gap:20px}",
 		},
 		{
 			"row-gap only writes the row carrier",
@@ -46,19 +46,19 @@ func TestGapCarrierRewrites(t *testing.T) {
 			"div {min-width:4px}",
 		},
 		{
-			"column-gap only writes the column carrier",
+			"column-gap remains a native computed property",
 			"div { column-gap: 8px }",
-			"div {max-width:8px}",
+			"div {column-gap:8px}",
 		},
 		{
 			"longhand row-gap and column-gap side by side",
 			"div { row-gap: 4px; column-gap: 8px }",
-			"div {min-width:4px;max-width:8px}",
+			"div {min-width:4px;column-gap:8px}",
 		},
 		{
-			"important flag travels into both carriers",
+			"important flag travels into both rewritten gap axes",
 			"div { gap: 20px !important }",
-			"div {min-width:20px!important;max-width:20px!important}",
+			"div {min-width:20px!important;column-gap:20px!important}",
 		},
 		{
 			"author min-width is dropped to free the row carrier",
@@ -66,19 +66,19 @@ func TestGapCarrierRewrites(t *testing.T) {
 			"div {}",
 		},
 		{
-			"author max-width is dropped to free the column carrier",
+			"author max-width is preserved for layout",
 			"div { max-width: 10px }",
-			"div {}",
+			"div { max-width: 10px }",
 		},
 		{
 			"dropped declarations leave their separator in place",
 			"div { min-width: 5px; max-width: 10px }",
-			"div {;}",
+			"div {; max-width: 10px }",
 		},
 		{
 			"the two carriers of one gap: exactly one separator in between",
 			"div { gap: 10px 20px !important }",
-			"div {min-width:10px!important;max-width:20px!important}",
+			"div {min-width:10px!important;column-gap:20px!important}",
 		},
 		{
 			"verbatim declaration is copied byte for byte",
@@ -93,12 +93,22 @@ func TestGapCarrierRewrites(t *testing.T) {
 	})
 }
 
+// Pin the actual max-width loss point found during the about-card
+// investigation: before mapping or layout sees the declaration, the
+// rewriter must leave it in the stylesheet text for libcss to compute.
+func TestRewriterPreservesMaxWidthForLayout(t *testing.T) {
+	const authored = "#card { max-width: 950px }"
+	if got := RewriteGapCarriers(authored); got != authored {
+		t.Errorf("rewritten stylesheet = %q, want max-width declaration preserved as %q", got, authored)
+	}
+}
+
 func TestGapCarrierRewritesInsideAtRules(t *testing.T) {
 	runRuleListCases(t, []rewriteCase{
 		{
 			"@media groups recurse into rule lists",
 			"@media (min-width: 500px) { #x { gap: 20px } span { min-width: 8px } }",
-			"@media (min-width: 500px) { #x {min-width:20px;max-width:20px} span {} }",
+			"@media (min-width: 500px) { #x {min-width:20px;column-gap:20px} span {} }",
 		},
 		{
 			"@import is not a block: copied verbatim",
@@ -108,7 +118,7 @@ func TestGapCarrierRewritesInsideAtRules(t *testing.T) {
 		{
 			"@page body is treated as declarations",
 			"@page { gap: 8px }",
-			"@page {min-width:8px;max-width:8px}",
+			"@page {min-width:8px;column-gap:8px}",
 		},
 		{
 			"a keyframes-like at-rule groups rules",
@@ -118,7 +128,7 @@ func TestGapCarrierRewritesInsideAtRules(t *testing.T) {
 		{
 			"a stray closing brace is copied",
 			"} div { gap: 4px }",
-			"} div {min-width:4px;max-width:4px}",
+			"} div {min-width:4px;column-gap:4px}",
 		},
 		{
 			"a comment before the property keeps the declaration verbatim",
@@ -191,9 +201,9 @@ func TestInlineDeclarationListRewrites(t *testing.T) {
 		in   string
 		out  string
 	}{
-		{"gap shorthand in an inline list", "gap: 20px", "min-width:20px;max-width:20px"},
-		{"two-value gap in an inline list", "gap: 10px 20px", "min-width:10px;max-width:20px"},
-		{"author max-width dropped inline", "max-width: 9px; color: red", "; color: red"},
+		{"gap shorthand in an inline list", "gap: 20px", "min-width:20px;column-gap:20px"},
+		{"two-value gap in an inline list", "gap: 10px 20px", "min-width:10px;column-gap:20px"},
+		{"author max-width preserved inline", "max-width: 9px; color: red", "max-width: 9px; color: red"},
 		{"font-family quoting inline", "font-family: T10 Sans Test", "font-family:\"T10 Sans Test\", sans-serif"},
 		{"verbatim inline declarations", "color: red; letter-spacing: 1.5px", "color: red; letter-spacing: 1.5px"},
 		{"quoted strings survive the semicolon walk", "content: \"a;b\"; color: red", "content: \"a;b\"; color: red"},

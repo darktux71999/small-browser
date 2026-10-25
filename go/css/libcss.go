@@ -58,7 +58,12 @@ const (
 	cssWidthSet   = uint8(0x01)
 	cssHeightSet  = uint8(0x01)
 	cssMarginSet  = uint8(0x01)
-	cssPaddingSet = uint8(0x01)
+	cssMarginAuto = uint8(0x02)
+
+	cssPositionRelative = uint8(0x02)
+	cssDirectionRTL     = uint8(0x02)
+	cssBoxSizingBorder  = uint8(0x02)
+	cssPaddingSet       = uint8(0x01)
 
 	cssColorColor = uint8(0x01)
 
@@ -113,6 +118,7 @@ const (
 
 	cssMinWidthSet = uint8(0x1)
 	cssMaxWidthSet = uint8(0x1)
+	cssInsetSet    = uint8(0x1)
 
 	cssBorderWidthThin   = uint8(0x1)
 	cssBorderWidthMedium = uint8(0x2)

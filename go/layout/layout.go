@@ -183,26 +183,68 @@ func (st *state) layoutNode(doc *dom.Document, styles []css.Style, id dom.NodeID
 	if isNoscript(doc, id) {
 		return 0 // the whole noscript subtree paints nothing (see isNoscript)
 	}
-	if isImage(doc, id) {
-		return st.layoutImage(doc, styles, id, originX, originY, availableWidth, f)
-	}
-	if style.Display == css.DisplayInline && !f.blockify {
+	if style.Display == css.DisplayInline && !f.blockify && !isImage(doc, id) {
 		return 0 // inline runs are flushed by their block container
 	}
-	if style.Flex != nil {
-		return st.layoutFlexContainer(doc, styles, id, originX, originY, availableWidth, f)
+	boxStart, runStart := len(st.out.Boxes), len(st.out.Runs)
+	var used float64
+	if isImage(doc, id) {
+		used = st.layoutImage(doc, styles, id, originX, originY, availableWidth, f)
+	} else if style.Flex != nil {
+		used = st.layoutFlexContainer(doc, styles, id, originX, originY, availableWidth, f)
+	} else if style.Grid != nil {
+		used = st.layoutGridContainer(doc, styles, id, originX, originY, availableWidth, f)
+	} else {
+		// The block path collapses vertical margins (CSS 2.1 §8.3.1,
+		// leading-fidelity S3). layoutNode keeps the legacy shell: the box sits
+		// at its own top margin and reports border plus both margins, so the
+		// root, flex/grid item, and measure contexts see no parent collapsing —
+		// only the sibling chain inside folds.
+		res := st.layoutBlock(doc, styles, id, originX, originY, availableWidth, f, false)
+		used = res.borderBottom - res.borderTop + res.top + res.bottom
 	}
-	if style.Grid != nil {
-		return st.layoutGridContainer(doc, styles, id, originX, originY, availableWidth, f)
-	}
+	st.applyRelativePosition(style, boxStart, runStart)
+	return used
+}
 
-	// The block path collapses vertical margins (CSS 2.1 §8.3.1,
-	// leading-fidelity S3). layoutNode keeps the legacy shell: the box sits
-	// at its own top margin and reports border plus both margins, so the
-	// root, flex/grid item, and measure contexts see no parent collapsing —
-	// only the sibling chain inside folds.
-	res := st.layoutBlock(doc, styles, id, originX, originY, availableWidth, f, false)
-	return res.borderBottom - res.borderTop + res.top + res.bottom
+// relativeShift applies CSS 2.1 §9.4.3 inset precedence to a relative box.
+// Top wins over bottom; in horizontal LTR flow left wins, while RTL flow
+// uses right when both opposing insets are non-auto.
+func relativeShift(style *css.Style) (x, y float64) {
+	if style.RelativeTop != nil {
+		y = *style.RelativeTop
+	} else if style.RelativeBottom != nil {
+		y = -*style.RelativeBottom
+	}
+	if style.DirectionRTL {
+		if style.RelativeRight != nil {
+			x = -*style.RelativeRight
+		} else if style.RelativeLeft != nil {
+			x = *style.RelativeLeft
+		}
+	} else if style.RelativeLeft != nil {
+		x = *style.RelativeLeft
+	} else if style.RelativeRight != nil {
+		x = -*style.RelativeRight
+	}
+	return x, y
+}
+
+// applyRelativePosition translates the newly emitted box and text-run
+// subtree only; flow results and the containing cursor remain unchanged.
+func (st *state) applyRelativePosition(style *css.Style, boxStart, runStart int) {
+	if !style.PositionRelative {
+		return
+	}
+	dx, dy := relativeShift(style)
+	for i := boxStart; i < len(st.out.Boxes); i++ {
+		st.out.Boxes[i].X += dx
+		st.out.Boxes[i].Y += dy
+	}
+	for i := runStart; i < len(st.out.Runs); i++ {
+		st.out.Runs[i].X += dx
+		st.out.Runs[i].Y += dy
+	}
 }
 
 // firstCollapseTop finds the first in-flow block-level participant under id
@@ -428,14 +470,18 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 			// A replaced element takes its own line in this block flow,
 			// so the text collected so far is flushed above it.
 			at := place(childStyle.Margin[0])
+			boxStart, runStart := len(st.out.Boxes), len(st.out.Runs)
 			total := st.layoutImage(doc, styles, child, contentX, at, contentW, forced{})
+			st.applyRelativePosition(childStyle, boxStart, runStart)
 			borderH := total - childStyle.Margin[0] - childStyle.Margin[2]
 			cursor = at + childStyle.Margin[0] + borderH
 			pending, hasPending = childStyle.Margin[2], true
 		case childStyle.Display == css.DisplayBlock && childStyle.Flex == nil && childStyle.Grid == nil:
 			childTop := collapsedTopMargin(styles, doc, child)
 			at := place(childTop)
+			boxStart, runStart := len(st.out.Boxes), len(st.out.Runs)
 			res := st.layoutBlock(doc, styles, child, contentX, at, contentW, forced{}, true)
+			st.applyRelativePosition(childStyle, boxStart, runStart)
 			cursor = res.borderBottom
 			pending, hasPending = res.bottom, true
 		case childStyle.Display == css.DisplayBlock:
@@ -498,15 +544,55 @@ type contentBox struct {
 }
 
 func computeContentBox(style *css.Style, originX, originY, availableWidth float64, f forced) contentBox {
-	borderX := originX + style.Margin[3]
+	marginLeft, marginRight := style.Margin[3], style.Margin[1]
 	var borderW float64
 	if f.width != nil {
 		borderW = *f.width
 	} else if style.Width != nil {
-		borderW = *style.Width + style.Padding[1] + style.Padding[3]
+		borderW = *style.Width
+		if !style.BorderBox {
+			borderW += style.Padding[1] + style.Padding[3]
+		}
 	} else {
-		borderW = max(availableWidth-style.Margin[1]-style.Margin[3], 1)
+		if style.MarginAuto[1] {
+			marginRight = 0
+		}
+		if style.MarginAuto[3] {
+			marginLeft = 0
+		}
+		borderW = max(availableWidth-marginRight-marginLeft, 1)
 	}
+	if style.MaxWidth != nil {
+		maxBorderW := *style.MaxWidth
+		if !style.BorderBox {
+			maxBorderW += style.Padding[1] + style.Padding[3]
+		}
+		if borderW > maxBorderW {
+			borderW = maxBorderW
+		}
+	}
+	if f.width == nil && (style.MarginAuto[1] || style.MarginAuto[3]) {
+		remaining := availableWidth - borderW
+		if !style.MarginAuto[1] {
+			remaining -= marginRight
+		}
+		if !style.MarginAuto[3] {
+			remaining -= marginLeft
+		}
+		switch {
+		case style.MarginAuto[1] && style.MarginAuto[3]:
+			if remaining > 0 {
+				marginLeft, marginRight = remaining/2, remaining/2
+			} else {
+				marginLeft, marginRight = 0, 0
+			}
+		case style.MarginAuto[3]:
+			marginLeft = remaining
+		case style.MarginAuto[1]:
+			marginRight = remaining
+		}
+	}
+	borderX := originX + marginLeft
 	return contentBox{
 		borderX: borderX,
 		borderW: borderW,
