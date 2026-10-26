@@ -260,6 +260,43 @@ func TestFlexWrapBreaksTheItemsIntoLines(t *testing.T) {
 	}
 }
 
+func TestFlexColumnAnonymousItemWrapsAtContainerWidth(t *testing.T) {
+	// The codeberg support-section shape: a column flex container whose
+	// intro paragraph is inline content (an anonymous item) between block
+	// children. The anonymous item takes the container's cross width and
+	// its height comes from wrapping at that width; the axes must not be
+	// swapped (a ~28px wide tower of one-word lines overflowing the next
+	// block, probe #anonymous [8 8 28 606]).
+	doc, _, l := flexCascade(t, `<style>
+  #col { display: flex; flex-direction: column; width: 600px; }
+  #col div { height: 40px; }
+</style><div id="col"><div id="head">Head</div>Together we can reach our goals with a little help from our friends and supporters<div id="btn">Become a member</div></div>`)
+	var anon *LayoutBox
+	for i := range l.Boxes {
+		if l.Boxes[i].Tag == "#anonymous" {
+			anon = &l.Boxes[i]
+			break
+		}
+	}
+	if anon == nil {
+		t.Fatal("column flex anonymous item has no box")
+	}
+	if !near(anon.W, 600.0) {
+		t.Fatalf("column anonymous item width = %v, want ~600 (the container cross width)", anon.W)
+	}
+	if !(anon.H < anon.W) {
+		t.Fatalf("column anonymous item = %vx%v, height must be wrapped text, not a transposed tower", anon.W, anon.H)
+	}
+	btn := boxFor(t, l, doc, "#btn")
+	if !(btn.Y >= anon.Y+anon.H-0.5) {
+		t.Fatalf("button starts at %v, inside the anonymous tower ending at %v", btn.Y, anon.Y+anon.H)
+	}
+	col := boxFor(t, l, doc, "#col")
+	if col.H > anon.H+120.0 {
+		t.Fatalf("column height %v inflates past wrapped text %v plus blocks", col.H, anon.H)
+	}
+}
+
 func TestNestedFlexItemIsContentSized(t *testing.T) {
 	// Oracle: tests/flex.rs nested_flex_item_is_content_sized (R3-4 pin).
 	doc, _, l := flexCascade(t, `<style>

@@ -300,21 +300,31 @@ func (st *state) layoutFlexContainer(doc *dom.Document, styles []css.Style, id d
 		var bottom float64
 		if item.run != nil {
 			// An anonymous item: the inline content of the container
-			// in a block of its own.
+			// in a block of its own. The box takes the item's main size
+			// along the main axis and its cross size along the cross
+			// axis: width/height for a row container, height/width for
+			// a column one. Painting main-as-width unconditionally
+			// transposes column items into a one-word-per-line tower.
+			var w, h float64
+			if row {
+				w, h = item.main, item.cross
+			} else {
+				w, h = item.cross, item.main
+			}
 			st.out.Boxes = append(st.out.Boxes, LayoutBox{
 				Node:        NoNode,
 				Tag:         "#anonymous",
 				X:           item.x,
 				Y:           item.y,
-				W:           item.main,
-				H:           item.cross,
+				W:           w,
+				H:           h,
 				Color:       item.style.Color,
 				FontSize:    item.style.FontSize,
 				Bold:        item.style.Bold,
 				BorderColor: [4]css.Color{item.style.Color, item.style.Color, item.style.Color, item.style.Color},
 			})
-			st.flushInline(doc, styles, &item.style, item.x, item.y, max(item.main, 1), item.run)
-			bottom = item.y + item.cross
+			st.flushInline(doc, styles, &item.style, item.x, item.y, max(w, 1), item.run)
+			bottom = item.y + h
 		} else {
 			runStarts[item.node] = len(st.out.Runs)
 			// The R3-4 lesson lives here: the item is laid out at its

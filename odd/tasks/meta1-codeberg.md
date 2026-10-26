@@ -798,3 +798,15 @@ sería bug de anchura de caja y se corrige ahí.
   palabra por línea y desborda hasta el footer (fragmentos "red by/gejo") — el
   bug de **eje cruzado en ítems anónimos de flex en columna** (`#anonymous
   [8 8 28 606]`) que el worker documentó como preexistente.
+- **L37** (2026-10-25): **Ejes de flex en columna corregidos** (muse) + corrección
+  de la lectura del padre. El paso 8 de pintado de flex mapeaba los ejes como
+  fila SIEMPRE (W=main/H=cross) — para columnas eso pintaba la altura medida
+  como ancho (la torre de una palabra). Fix condicional por dirección; los
+  helpers de medida ya eran correctos. Fixture RED→GREEN que reproduce la
+  geometría exacta (`#anonymous [8 31 23x600]` → `[8 31 600x23]`, página
+  639→85px); dumps de fila byte-idénticos; 12/12 paquetes. **Honestidad del
+  padre**: los fragmentos "red by/gejo" que vi en el borde del footer eran el
+  **propio bloque "Powered by Forgejo" cortado por mi recorte** — no era texto
+  fantasma; la torre tampoco se manifiesta en el HTML vivo actual (el markup
+  cambió). Lección: los recortes mienten — la página entera es la prueba; y la
+  lección del worker: el fixture es la prueba decisiva cuando el vivo cambia.
