@@ -131,6 +131,8 @@ type Runtime struct {
 	objs     map[Handle]*[16]byte
 	nextH    Handle
 	closed   bool
+
+	webTitle string // T2: last good document.title (Title's fallback)
 }
 
 // runtimes maps integer cookies back to Go runtimes for the C callbacks.

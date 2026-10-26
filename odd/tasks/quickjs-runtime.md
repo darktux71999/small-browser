@@ -43,7 +43,7 @@ aparcado por coste).
 | T | Descripción | Spec | Ruta | Estado |
 |---|---|---|---|---|
 | T1 | `go/js`: bindings QuickJS + eval + captura de errores (formato oráculo) | S1 | delegado (muse-spark-1.3-contributor) | ✅ (6 tests/13 subtests; goldens byte-idénticos al oráculo; 12 paquetes verdes) |
-| T2 | Bindings DOM/window/timers/eventos por evidencia (fixtures + codeberg) | S2 | muse-spark | pendiente |
+| T2 | Superficie JS del oráculo (7 miembros) + errores byte-exactos | S2 | muse-spark | ✅ (13 tests; paridad de superficie oracle↔Go = conjuntos iguales) |
 | T3 | Pipeline de scripts (orden, re-render, stderr) | S3 | muse-spark | pendiente |
 | T4 | Aceptación diferencial (9 fixtures idénticos) + cierre KNOWN_DIFFS | S4 | muse-spark | pendiente |
 
@@ -76,3 +76,26 @@ aparcado por coste).
   `Risk: item 2 (S5)` — JS sin sandbox (mitigación acotada: sin red/FS, tope de
   tiempo); el sandbox real es decisión del usuario. Restos de scratch
   (/tmp/jsprobe, /tmp/jscmp) retirados por el padre.
+- **L3** (2026-10-25): **T2 entregado — y el hallazgo que redefine S2/S4**
+  (muse-spark). **La superficie JS del oráculo son SOLO 7 miembros**
+  (`src/js.rs`, verificado por grep): `console` (log/error/warn),
+  `document.title`, `window===globalThis`, `location` de solo lectura
+  (href/protocol/host/hostname/pathname/toString), `navigator.userAgent`, y
+  `add/removeEventListener` + `__bl_dispatch` (consume-once, dup-once,
+  handleEvent, aislamiento de errores). **NO existen** getElementById,
+  querySelector, cookies, timers, innerHTML ni APIs de nodos. Evidencia dura:
+  los 9 fixtures JS **fallan contra el propio oráculo** salvo `js-window` (pasa
+  limpio) y `demo` (1er script ok + SyntaxError): los otros seis producen
+  `TypeError: not a function` / `ReferenceError: setTimeout is not defined` —
+  líneas de error que el motor Go debe reproducir **byte a byte** (los goldens
+  están pinneados). Por tanto: **el "gap JS" es de paridad de errores, no de
+  APIs** — T4 cierra los 9 fixtures reproduciendo esos errores, y las APIs de
+  DOM reales (la "interactividad real") son una **divergencia deliberada
+  posterior** (como var()/SVG) que requiere decisión explícita de alcance.
+  Semánticas finas replicadas con refs: los eventos lifecycle saltan tras cada
+  eval aunque el script falle y el error del script gana (js.rs:229-239); las
+  listas de handlers se consumen por dispatch (js.rs:99-101); listeners no
+  fun y duplicados se ignoran (js.rs:63-71); set_url solo absoluto, host con
+  puerto, path vacío → "/", about:blank → pathname "blank" (js.rs:194-217);
+  title() relee con fallback al último valor bueno (js.rs:241-250). 13 tests
+  nuevos; 19/19 en go/js; 12 paquetes verdes. `Risk: item 2 (S5)` sin cambios.
