@@ -1,16 +1,23 @@
 # Known differential diffs (S1 exception register)
 
-The dual-engine differential (`go run ./cmd/differential --oracle
-../target/debug/browser-lite --candidate <built binary> --corpus
-../test/data --report text`) stands at **62/71 identical**. The 9
-remaining diffs are all in one domain: the Rust oracle evaluates page
-scripts with QuickJS, which the Go engine does not port (no JS runtime).
-Every other stream matches, and the painted **PNG bytes are identical**
-for all 9 fixtures — scripts never reach paint.
+> **RESOLVED 2026-10-25 (QuickJS runtime, T1–T4 of
+> odd/tasks/quickjs-runtime.md).** The Go engine now embeds QuickJS via cgo
+> and evaluates page scripts with byte-identical error semantics: every
+> `browser-lite: js error: ...` stderr line and every script-mutated `title:`
+> line of the 9 fixtures below now matches the oracle **byte for byte**
+> (verified with the full 6-stream differential). The fixtures' remaining
+> diffs (`dump-stdout`, `png-stdout`, `png`) are **layout-geometry** streams
+> owned by the registered line-height/var()/SVG categories — not the JS
+> domain. `js-dom.html` is fully identical. The table below is the historical
+> record of the JS-domain rows as they stood before the runtime landed; the
+> follow-up DOM-API track (getElementById, timers, cookies, innerHTML — the
+> oracle has none of them) is a SEPARATE deliberate-divergence decision,
+> recorded in the feature doc.
 
-In each case the oracle prints `browser-lite: js error: ...` on stderr
-and/or a script-mutated `title:` line on stdout, while the Go engine runs
-the page without evaluating `<script>` and keeps the parsed title.
+Historical state at register creation: `go run ./cmd/differential --oracle
+../target/debug/browser-lite --candidate <built binary> --corpus
+../test/data --report text` stood at **62/71 identical**, the 9 remaining
+diffs in the JS domain (rows below).
 
 | Fixture | Differing streams | Oracle behavior | Go behavior instead |
 |---|---|---|---|
@@ -24,9 +31,11 @@ the page without evaluating `<script>` and keeps the parsed title.
 | `net-utf8.html` | dump-stderr, png-stderr | `browser-lite: js error: TypeError: not a function` | No script evaluation; stderr empty. Title identical (`net-utf8`). |
 | `timers.html` | dump-stderr, png-stderr | `browser-lite: js error: ReferenceError: setTimeout is not defined` | No script evaluation (`setTimeout` does not exist); stderr empty. Title identical (`Timers`). |
 
-Cause for all rows: the QuickJS runtime is not ported to the Go engine.
-Closing any row requires porting script evaluation, which is outside the
-current scope; until then these 9 diffs are accepted and expected.
+Historical cause for all rows: the QuickJS runtime was not ported to the
+Go engine. **Resolution (2026-10-25): ported** — script evaluation with
+the oracle's exact 7-member JS surface and error semantics; the JS-domain
+streams closed. Residual fixture diffs belong to the geometry categories
+(line-height semantics, var(), SVG/inline atoms) as registered above.
 
 ## Category: noscript policy (leading-fidelity S2)
 

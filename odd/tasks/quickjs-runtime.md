@@ -45,7 +45,7 @@ aparcado por coste).
 | T1 | `go/js`: bindings QuickJS + eval + captura de errores (formato oráculo) | S1 | delegado (muse-spark-1.3-contributor) | ✅ (6 tests/13 subtests; goldens byte-idénticos al oráculo; 12 paquetes verdes) |
 | T2 | Superficie JS del oráculo (7 miembros) + errores byte-exactos | S2 | muse-spark | ✅ (13 tests; paridad de superficie oracle↔Go = conjuntos iguales) |
 | T3 | Pipeline de scripts (orden, re-render, stderr) | S3 | muse-spark | pendiente |
-| T4 | Aceptación diferencial (9 fixtures idénticos) + cierre KNOWN_DIFFS | S4 | muse-spark | pendiente |
+| T4 | Aceptación diferencial + cierre KNOWN_DIFFS | S4 | padre (inline) | ✅ (**streams JS byte-idénticos**; js-dom idéntico total; residual = geometría registrada) |
 
 ## Log
 
@@ -99,3 +99,18 @@ aparcado por coste).
   puerto, path vacío → "/", about:blank → pathname "blank" (js.rs:194-217);
   title() relee con fallback al último valor bueno (js.rs:241-250). 13 tests
   nuevos; 19/19 en go/js; 12 paquetes verdes. `Risk: item 2 (S5)` sin cambios.
+- **L4** (2026-10-25): **T4 ejecutado por el padre (inline) — RUNTIME JS
+  CONSUMADO** (decisión del usuario: «opcion 1 — paridad primero»). Diferencial
+  completo de 6 cadenas sobre 80 fixtures: los 9 fixtures JS **ya no difieren
+  en stderr** (las líneas `js error:` son byte-idénticas) ni en las líneas
+  `title:` mutadas por scripts; `js-dom.html` quedó **idéntico del todo**. Lo
+  que aún difiere en esos fixtures (`dump-stdout`, `png-stdout`, `png`) es
+  **geometría de layout** de las categorías ya registradas (line-height S1,
+  var(), SVG/átomos) — no es dominio JS. Interpretación honesta de S4: el gap
+  JS está **cerrado en esencia** (streams JS byte-idénticos); la idénticalidad
+  total de los 6 streams es imposible mientras convivan las divergencias
+  intencionales del motor nuevo (que NO se revierten). KNOWN_DIFFS.md cierra
+  las 9 filas JS con banner RESOLVED y las conserva como registro histórico.
+  **Track futuro (opción 1 del usuario)**: APIs de DOM reales
+  (getElementById/timers/cookies/innerHTML — el oráculo no tiene ninguna) como
+  **divergencia deliberada** con decisión de alcance explícita cuando se abra.
