@@ -644,7 +644,11 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 	case cssLineHeightDimension:
 		out.LineHeightNormal = false
 		if uint32(lineHeightUnit) == cssUnitPct {
-			out.LineHeight = 1.2
+			// CSS 2.1 §10.8: a percentage line-height resolves against the
+			// element's own font size, so the used value is that percentage
+			// as a factor the shaper applies to font-size. (It used to fall
+			// back to 1.2, which cramped every percentage-styled block.)
+			out.LineHeight = fixedToF64(lineHeightLength) / 100.0
 		} else {
 			px := fixedToF64(C.css_unit_len2css_px(style, unitCtx, lineHeightLength, C.css_unit(lineHeightUnit)))
 			if out.FontSize > 0 {
