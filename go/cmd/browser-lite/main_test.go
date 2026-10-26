@@ -123,7 +123,7 @@ func TestUsageErrors(t *testing.T) {
 		if code := run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("run(%v): exit %d, want 2", args, code)
 		}
-		want := "usage: browser-lite [--dump] [--png out.png] <file.html|http(s)://url>\n"
+		want := "usage: browser-lite [--dump] [--png out.png] [--wpt url] <file.html|http(s)://url>\n"
 		if stderr.String() != want {
 			t.Errorf("run(%v): stderr %q, want %q", args, stderr.String(), want)
 		}

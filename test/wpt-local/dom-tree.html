@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><title>wpt-local: tree</title></head>
+<body>
+<div id="parent"><span id="kid">k</span></div>
+<script>
+test(function () {
+  var parent = document.getElementById("parent");
+  var made = document.createElement("em");
+  made.textContent = "new";
+  var back = parent.appendChild(made);
+  assert_equals(back, made, "appendChild returns the child");
+  assert_equals(document.querySelector("#parent em").textContent, "new", "child attached");
+}, "createElement and appendChild");
+
+test(function () {
+  var parent = document.getElementById("parent");
+  var kid = document.getElementById("kid");
+  var back = parent.removeChild(kid);
+  assert_equals(back, kid, "removeChild returns the child");
+  assert_equals(document.querySelector("#kid"), null, "child detached");
+}, "removeChild detaches");
+
+test(function () {
+  assert_true(document.body !== null, "body exists");
+  assert_equals(document.body.tagName, "BODY", "body tag");
+  assert_true(document.documentElement !== null, "root exists");
+  assert_equals(document.documentElement.tagName, "HTML", "root tag");
+}, "body and documentElement");
+</script>
+</body></html>

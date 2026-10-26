@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><title>wpt-local: timers gap</title></head>
+<body>
+<script>
+// This runtime has no setTimeout/setInterval (the DOM track has not built
+// timers yet). The hook degrades honestly: nothing here fakes a timer.
+test(function () {
+  assert_equals(typeof setTimeout, "undefined", "no setTimeout global");
+  assert_equals(typeof setInterval, "undefined", "no setInterval global");
+}, "timers are absent, not emulated");
+
+test(function () {
+  var h = async_test("sync completion");
+  var seen = [];
+  h.step(function () { seen.push(1); });
+  h.step(function () { seen.push(2); });
+  assert_equals(seen.join(","), "1,2", "steps ran");
+  h.done();
+}, "async_test with synchronous done() passes");
+
+promise_test(function () {
+  return Promise.resolve("v").then(function (v) {
+    assert_equals(v, "v", "microtask value");
+  });
+}, "promise_test settles through microtasks");
+</script>
+</body></html>

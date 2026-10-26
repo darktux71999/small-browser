@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><title>wpt-local: attributes</title></head>
+<body>
+<div id="at" data-x="1" title="t">x</div>
+<script>
+test(function () {
+  var el = document.getElementById("at");
+  assert_equals(el.getAttribute("data-x"), "1", "get");
+  assert_equals(el.getAttribute("absent"), null, "absent is null");
+  assert_true(el.hasAttribute("title"), "has");
+  assert_false(el.hasAttribute("absent"), "has not");
+}, "attribute reads");
+
+test(function () {
+  var el = document.getElementById("at");
+  el.setAttribute("data-x", "2");
+  assert_equals(el.getAttribute("data-x"), "2", "overwrite");
+  el.removeAttribute("title");
+  assert_false(el.hasAttribute("title"), "removed");
+  assert_equals(el.getAttribute("title"), null, "removed reads null");
+}, "attribute writes");
+</script>
+</body></html>

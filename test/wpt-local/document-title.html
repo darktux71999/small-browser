@@ -1,0 +1,11 @@
+<!doctype html>
+<html><head><title>wpt-local: title</title></head>
+<body>
+<script>
+test(function () {
+  assert_equals(document.title, "", "starts empty in wpt mode");
+  document.title = "changed";
+  assert_equals(document.title, "changed", "setter sticks");
+}, "document.title round-trips");
+</script>
+</body></html>

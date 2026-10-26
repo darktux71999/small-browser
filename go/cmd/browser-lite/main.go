@@ -38,6 +38,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var pngPath *string
 	var fileArg *string
 	var frames *uint32
+	var wptURL *string
+	wptTimeoutMs := 15000
 	dump := false
 
 	i := 0
@@ -59,6 +61,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 					frames = &v
 				}
 			}
+		case "--wpt":
+			i++
+			if i < len(args) {
+				v := args[i]
+				wptURL = &v
+			}
+		case "--wpt-timeout-ms":
+			i++
+			if i < len(args) {
+				n, err := strconv.Atoi(args[i])
+				if err != nil || n <= 0 {
+					fmt.Fprintf(stderr, "browser-lite: invalid --wpt-timeout-ms %q\n", args[i])
+					return 2
+				}
+				wptTimeoutMs = n
+			}
 		case "--help", "-h":
 		default:
 			v := args[i]
@@ -67,8 +85,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		i++
 	}
 
+	if wptURL != nil {
+		return runWPT(*wptURL, wptTimeoutMs, stdout, stderr)
+	}
+
 	if fileArg == nil {
-		fmt.Fprintln(stderr, "usage: browser-lite [--dump] [--png out.png] <file.html|http(s)://url>")
+		fmt.Fprintln(stderr, "usage: browser-lite [--dump] [--png out.png] [--wpt url] <file.html|http(s)://url>")
 		return 2
 	}
 

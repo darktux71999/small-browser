@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><title>wpt-local: matches closest</title></head>
+<body>
+<div id="outer" class="box"><p id="inner" class="note">text</p></div>
+<script>
+test(function () {
+  var el = document.getElementById("inner");
+  assert_true(el.matches("p.note"), "matching selector");
+  assert_false(el.matches("div"), "non-matching selector");
+  assert_true(el.matches("#inner"), "id selector");
+}, "matches tests the element");
+
+test(function () {
+  var el = document.getElementById("inner");
+  var hit = el.closest("div.box");
+  assert_true(hit !== null, "found ancestor");
+  assert_equals(hit.id, "outer", "nearest ancestor wins");
+  assert_equals(el.closest("p"), el, "self matches first");
+  assert_equals(el.closest("span.nope"), null, "no ancestor is null");
+}, "closest walks ancestors");
+</script>
+</body></html>

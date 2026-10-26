@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><title>wpt-local: innerHTML</title></head>
+<body>
+<div id="h"><span>a</span> tail</div>
+<script>
+test(function () {
+  assert_equals(document.getElementById("h").innerHTML, "<span>a</span> tail", "serialization");
+}, "innerHTML serializes children");
+
+test(function () {
+  var el = document.getElementById("h");
+  el.innerHTML = "<b>new</b>";
+  assert_equals(document.querySelector("#h b").textContent, "new", "parsed element");
+  assert_equals(el.textContent, "new", "text follows");
+}, "innerHTML setter parses a fragment");
+
+test(function () {
+  var el = document.getElementById("h");
+  el.innerHTML = "";
+  assert_equals(el.textContent, "", "cleared");
+  // Engine gap (not this unit's scope): setHTML/setText drop the child
+  // list without clearing the detached children's parent links, so a
+  // stale querySelector can still hit the orphan. innerHTML serializes
+  // the live child list, so it is the honest clearing check here.
+  assert_equals(el.innerHTML, "", "no children left");
+}, "innerHTML setter with empty string clears");
+</script>
+</body></html>

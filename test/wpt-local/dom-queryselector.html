@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><title>wpt-local: querySelector</title></head>
+<body>
+<div id="main"><p class="note">one</p><p class="note">two</p></div>
+<script>
+test(function () {
+  var el = document.querySelector("#main .note");
+  assert_true(el !== null, "found");
+  assert_equals(el.textContent, "one", "first match wins");
+}, "querySelector returns the first match");
+
+test(function () {
+  var list = document.querySelectorAll("p.note");
+  assert_equals(list.length, 2, "count");
+  assert_equals(list[0].textContent, "one", "first");
+  assert_equals(list[1].textContent, "two", "second");
+  assert_equals(list.item(0), list[0], "item() matches index");
+  assert_equals(list.item(9), null, "item() out of range is null");
+}, "querySelectorAll lists every match");
+
+test(function () {
+  assert_equals(document.querySelector("span.nope"), null, "no match is null");
+  assert_equals(document.querySelectorAll("span.nope").length, 0, "no matches is empty");
+}, "selectors without matches");
+</script>
+</body></html>

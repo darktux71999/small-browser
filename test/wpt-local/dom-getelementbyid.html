@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><title>wpt-local: getElementById</title></head>
+<body>
+<div id="a" class="x">hello</div>
+<div id="b">world</div>
+<script>
+test(function () {
+  var el = document.getElementById("a");
+  assert_true(el !== null, "attached element found");
+  assert_equals(el.tagName, "DIV", "tagName");
+  assert_equals(el.textContent, "hello", "text");
+}, "getElementById returns the attached element");
+
+test(function () {
+  assert_equals(document.getElementById("missing"), null, "absent id is null");
+}, "getElementById returns null for absent id");
+
+test(function () {
+  var el = document.getElementById("b");
+  el.id = "renamed";
+  assert_equals(document.getElementById("b"), null, "old id gone");
+  assert_equals(document.getElementById("renamed"), el, "new id resolves");
+}, "id setter re-indexes the element");
+</script>
+</body></html>

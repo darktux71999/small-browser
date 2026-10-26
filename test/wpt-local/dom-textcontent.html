@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><title>wpt-local: textContent</title></head>
+<body>
+<div id="t">a<b>bold</b>c</div>
+<script>
+test(function () {
+  assert_equals(document.getElementById("t").textContent, "aboldc", "nested text");
+}, "textContent reads the subtree");
+
+test(function () {
+  var el = document.getElementById("t");
+  el.textContent = "plain";
+  assert_equals(el.textContent, "plain", "replaced");
+  assert_equals(el.innerHTML, "plain", "children are one text node");
+}, "textContent setter replaces children");
+
+test(function () {
+  var el = document.getElementById("t");
+  el.textContent = "";
+  assert_equals(el.textContent, "", "empty");
+  assert_equals(el.innerHTML, "", "no children left");
+}, "textContent setter with empty string clears");
+</script>
+</body></html>

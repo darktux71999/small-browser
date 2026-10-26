@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><title>wpt-local: location</title></head>
+<body>
+<script>
+test(function () {
+  assert_equals(location.protocol, "http:", "protocol");
+  assert_equals(location.hostname, "127.0.0.1", "hostname");
+  assert_true(location.pathname === "/location-url.html", "pathname, got " + location.pathname);
+  assert_true(location.href.indexOf("http://127.0.0.1:") === 0, "href has origin, got " + location.href);
+}, "location exposes the page URL");
+</script>
+</body></html>
