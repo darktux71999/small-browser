@@ -146,6 +146,19 @@ var runtimes sync.Map // int64 -> *Runtime
 
 var cookieSeq atomic.Int64
 
+// defaultMaxHeap bounds the QuickJS heap of each runtime (S5 mitigation: a
+// page script must not grow the process heap without limit). 128MB is
+// generous for the pages this engine targets; SetMaxHeap overrides it.
+const defaultMaxHeap = 128 << 20
+
+// SetMaxHeap caps this runtime's QuickJS heap at bytes (must be > 0). An
+// allocation over the cap fails with a JS out-of-memory error instead of
+// growing the process without bound (QuickJS treats 0 as "nothing may
+// allocate", so only positive values are accepted here).
+func (r *Runtime) SetMaxHeap(bytes int64) {
+	C.JS_SetMemoryLimit((*C.JSRuntime)(r.rt), C.size_t(bytes))
+}
+
 // New creates a runtime with a fresh context, a console matching the
 // oracle's "[js] ..." lines, and the default evaluation bound.
 func New() (*Runtime, error) {
@@ -153,6 +166,7 @@ func New() (*Runtime, error) {
 	if rt == nil {
 		return nil, &JSError{Msg: "quickjs: JS_NewRuntime failed"}
 	}
+	C.JS_SetMemoryLimit((*C.JSRuntime)(rt), C.size_t(defaultMaxHeap))
 	ctx := C.jsgo_new_context(rt)
 	if ctx == nil {
 		C.jsgo_free_runtime(rt)

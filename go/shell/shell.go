@@ -329,12 +329,25 @@ func Run(l *layout.Layout, title string, maxFrames *uint32) error {
 		C.shell_quit()
 	}
 
+	// argb is the reusable premultiplied upload buffer for the fixed-size
+	// viewport texture. SDL_UpdateTexture copies the pixels on return, so the
+	// buffer is safe to repaint frame after frame: this removes the per-frame
+	// 3 MB (ViewportWidth x ViewportHeight x 4) allocation that toARGB used to
+	// make on every scroll repaint. Peak RSS is bound by the glibc arena
+	// (which already retained the freed buffer), so this chiefly cuts the
+	// allocation rate and GC pressure rather than the high-water mark.
+	var argb []byte
 	upload := func(f paint.Frame) error {
-		argb := toARGB(f)
-		if len(argb) == 0 {
+		need := f.Width * f.Height * 4
+		if len(f.Pixels) < need {
 			return WindowError("SDL_UpdateTexture: empty frame")
 		}
-		if C.shell_update_texture(texture, unsafe.Pointer(&argb[0]), C.int(f.Width*4)) == 0 {
+		if cap(argb) < need {
+			argb = make([]byte, need)
+		}
+		buf := argb[:need]
+		toARGBInto(f, buf)
+		if C.shell_update_texture(texture, unsafe.Pointer(&buf[0]), C.int(f.Width*4)) == 0 {
 			return windowError("SDL_UpdateTexture")
 		}
 		return nil
@@ -406,21 +419,21 @@ func Run(l *layout.Layout, title string, maxFrames *uint32) error {
 	return nil
 }
 
-// toARGB converts a straight-RGBA8 frame to the premultiplied ARGB8888 bytes
-// the streaming texture expects, mirroring the oracle's rgba_surface
+// toARGBInto converts a straight-RGBA8 frame to the premultiplied ARGB8888
+// bytes the streaming texture expects, writing into dst (which must hold at
+// least Width*Height*4 bytes), mirroring the oracle's rgba_surface
 // conversion (truncating channel*alpha/255). Native-endian words are stored
 // little-endian here; Cairo copies the same layout when the oracle uploads
-// its raw surface rows.
-func toARGB(f paint.Frame) []byte {
-	if len(f.Pixels) < f.Width*f.Height*4 {
-		return nil
+// its raw surface rows. The caller may reuse dst across frames.
+func toARGBInto(f paint.Frame, dst []byte) {
+	need := f.Width * f.Height * 4
+	if len(dst) < need || len(f.Pixels) < need {
+		return
 	}
-	out := make([]byte, f.Width*f.Height*4)
 	for i := 0; i < f.Width*f.Height; i++ {
 		r, g, b, a := uint32(f.Pixels[i*4]), uint32(f.Pixels[i*4+1]),
 			uint32(f.Pixels[i*4+2]), uint32(f.Pixels[i*4+3])
 		word := (a << 24) | ((r * a / 255) << 16) | ((g * a / 255) << 8) | (b * a / 255)
-		binary.LittleEndian.PutUint32(out[i*4:], word)
+		binary.LittleEndian.PutUint32(dst[i*4:], word)
 	}
-	return out
 }
