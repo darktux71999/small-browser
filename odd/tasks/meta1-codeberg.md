@@ -717,3 +717,21 @@ sería bug de anchura de caja y se corrige ahí.
   solo la base de sizing). Con esto el **TOP-5 del QA visual (L30) queda
   cerrado en su totalidad**: píldora ✓ POWERED BY ✓ botones ✓ footer ✓
   héroe ✓. `Risk: none`.
+- **L32-bis/M5** (2026-10-25): **Medición M5** (padre, inline — rig fijado en
+  `tools/fidelity-bands.py`, método L20). Motor **1000×1872** vs ref 988×1669 ·
+  AE página **11.99%** · **fase d=0 @ 12.07%** (la mejor registrada — la
+  alineación es perfecta en offset cero, el residual es elemento a elemento).
+  **Bandas 3-10: 6/8** (exceden 6: 28.37% y 7: 26.20%; la 1 va al 51.16%). El
+  objetivo S7 es sensible a la rejilla (la geometría cambió todo el día) y la
+  marca 8/8 de P13 corresponde a su snapshot. **Diagnóstico de los excesos: son
+  del lado de la referencia** — la captura congelada de Firefox lleva el banner
+  ToU que su JS muestra, y nuestro motor NO lo muestra porque reproduce el
+  oráculo (el JS del banner necesita APIs de DOM → `TypeError`, idéntico al
+  oráculo): **el exceso de la banda 1 (51%) es el trade-off literal de la
+  decisión «opción 1: paridad primero»**. Las bandas 6-7 son la zona héroe/card
+  con la deriva de ~113px (el banner de la referencia) + la métrica de card
+  334 vs ~325 de Firefox. Fidelidad a Firefox y paridad al oráculo están en
+  tensión exactamente ahí: **el track de APIs de DOM** (divergencia deliberada
+  pendiente de alcance) es lo que cerraría esa banda a favor de Firefox. Resto
+  de bandas: 0:24.95 · 2-5: 8.5-12.2 · 8-11: 8.5-18.9 · 12:31.0 (transición
+  about/stats — el siguiente hueco de métrica) · 13-23: 0.87-12.06.
