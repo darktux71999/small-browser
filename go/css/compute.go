@@ -289,6 +289,13 @@ func computeInner(doc NodeIndex, sheets []Sheet, viewportWidth float64, docURL s
 
 		styles[id] = unsafe.Pointer(style)
 		out[id] = mapStyle(style, &unitCtx, isRootElement(doc, id))
+		if isRootElement(doc, id) {
+			// CSS Values and Units §5.1.1 defines rem from the root element's
+			// computed font size. Keep the unit context's root_style unset
+			// while selecting the root itself (where rem falls back to the
+			// initial font size), then expose its computed style to descendants.
+			unitCtx.root_style = (*C.css_computed_style)(style)
+		}
 	}
 
 	// The author sheet texts, as collected: the manual passes below read

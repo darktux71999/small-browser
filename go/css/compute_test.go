@@ -226,6 +226,66 @@ func TestComputedStyleInheritsAndResolvesRelativeFontSizes(t *testing.T) {
 	}
 }
 
+func TestRootFontSizePercentageSetsRemBase(t *testing.T) {
+	d, styles := doc(t, `<html><head><style>
+html { font-size: 62.5% }
+main { font-size: 16px }
+#support-heading { font-size: 2em }
+#support-copy { font-size: 1.125em }
+#rem-probe { font-size: 3.2rem }
+</style></head><body><main>
+<h3 id="support-heading">Your support helps us grow!</h3>
+<p id="support-copy">Our independence is reinforced by our non-</p>
+<div id="rem-probe">rem probe</div>
+</main></body></html>`, testViewport)
+
+	for _, test := range []struct {
+		selector string
+		want     float64
+	}{
+		{"html", 10},
+		{"#support-heading", 32},
+		{"#support-copy", 18},
+		{"#rem-probe", 32},
+	} {
+		t.Run(test.selector, func(t *testing.T) {
+			got := styles[mustSelect(t, d, test.selector)].FontSize
+			if !near(got, test.want) {
+				t.Errorf("font-size = %vpx, want %vpx", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSupportFontSizesUseTheMainFontSize(t *testing.T) {
+	d, styles := doc(t, `<html><head><style>
+html { font-size: 14px }
+main { font-size: 16px }
+section#home-section-support h3 { font-size: 2em }
+section#home-section-support p { font-size: 1.125em }
+</style></head><body><main><section id="home-section-support">
+<h3>Your support helps us grow!</h3>
+<p>Our independence is reinforced by our non-</p>
+</section></main></body></html>`, testViewport)
+
+	for _, test := range []struct {
+		selector string
+		want     float64
+	}{
+		{"html", 14},
+		{"main", 16},
+		{"h3", 32},
+		{"p", 18},
+	} {
+		t.Run(test.selector, func(t *testing.T) {
+			got := styles[mustSelect(t, d, test.selector)].FontSize
+			if !near(got, test.want) {
+				t.Errorf("font-size = %vpx, want %vpx", got, test.want)
+			}
+		})
+	}
+}
+
 func TestMediaQueriesResolveAgainstTheViewportWidth(t *testing.T) {
 	html := fixture(t, "css-media.html")
 
