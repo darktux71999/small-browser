@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -15,6 +16,7 @@ import (
 
 	"browser-lite/css"
 	"browser-lite/dom"
+	"browser-lite/js"
 	"browser-lite/layout"
 	blnet "browser-lite/net"
 	"browser-lite/paint"
@@ -71,14 +73,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	source := *fileArg
-	var html, base string
+	var html, base, pageURL string
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 		text, finalURL, err := blnet.FetchTextResult(source)
 		if err != nil {
 			fmt.Fprintf(stderr, "browser-lite: %s: %s\n", source, err)
 			return 1
 		}
-		html, base = text, finalURL
+		html, base, pageURL = text, finalURL, finalURL
 	} else {
 		raw, err := os.ReadFile(source)
 		if err != nil {
@@ -98,6 +100,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			abs = resolved
 		}
 		base = filepath.Dir(abs)
+		pageURL = "file://" + abs
 	}
 
 	doc := dom.Parse(html)
@@ -124,6 +127,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if id, ok := doc.QuerySelector("title"); ok {
 		title = doc.TextContent(id)
 	}
+
+	// Page scripts run after style resolution and before layout, like the
+	// oracle (src/main.rs:82-109): each failure is reported and execution
+	// continues. Title is re-read after scripts (last-good fallback lives
+	// in js.Title), so --dump's `title:` line and the shell see mutations.
+	rt, err := js.New()
+	if err != nil {
+		var jserr *js.JSError
+		msg := err.Error()
+		if errors.As(err, &jserr) {
+			msg = jserr.Msg
+		}
+		fmt.Fprintf(stderr, "browser-lite: %s\n", msg)
+		return 1
+	}
+	defer rt.Close()
+	if err := rt.Bind(title, pageURL); err != nil {
+		fmt.Fprintf(stderr, "browser-lite: js location: %s\n", err)
+	}
+	runPageScripts(doc, rt, stderr)
+	title = rt.Title()
 
 	images := layout.LoadImages(doc, styles, base)
 	l := layout.RenderWithImages(doc, styles, viewportWidth, images)
