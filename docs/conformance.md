@@ -15,7 +15,8 @@ our own, earned from our own code and tests.
 
 Snapshot: ledger v1, 2026-10-26. Spec snapshots: WHATWG living standards as
 of 2026-10-26; W3C TR snapshots per MANIFEST (Media Queries L5 is a WD —
-no TR exists).
+no TR exists); ECMA-262 ES2020…ES2026 dated PDFs + living render and
+ECMA-402 13th ed per MANIFEST (`03-javascript/`).
 
 ## How to read this
 
@@ -69,7 +70,7 @@ asks*, WPT says *what the engine scores*. Neither replaces the other.
 
 ## Row tally (counted across the tables below)
 
-**18 done · 56 partial · 52 absent — 126 rows total.**
+**21 done · 60 partial · 55 absent — 136 rows total.**
 The histogram is the headline: over four-fifths of the map is partial-or-absent
 subset work, and the absent column is the ordered backlog (§"Next work" at
 the end names the head of the queue).
@@ -257,6 +258,30 @@ the end names the head of the queue).
 | Fetch §3 | CORS, modes, credentials, `no-cors` | absent | — | Nothing enforced; single-origin assumption throughout |
 | Fetch §5 | `fetch()` script API + promises integration | absent | — | No promise job queue (see §8 event-loop row) |
 | Fetch §6 | Subresource integrity, referrer policy, MIME sniffing | absent | — | Bytes accepted as-is; sniffing unverified |
+
+---
+
+## ECMA-262 / ECMA-402 (`03-javascript` on the shelf)
+
+The engine embeds QuickJS (`go/js/js.go` over `go/js/glue.c`): page scripts
+run as classic scripts in one persistent context, thrown exceptions surface
+as oracle-format `JSError`s, and objects/functions that outlive one Eval are
+addressed through a handle registry. Rows below are measured against that
+embedding, not against QuickJS upstream — unexercised language surface
+counts as absent even where the C library implements it.
+
+| Spec section | Requirement | Status | Evidence | Notes |
+|--------------|-------------|--------|----------|-------|
+| ECMA-262 §11–§12 | Lexical grammar: identifiers, string/numeric/boolean/null/undefined literals | partial | `go/js/js.go` Eval, `go/js/js_test.go` TestEvalPrimitives | Pinned literal subset only; template literals, regex literals, unicode escapes unverified |
+| ECMA-262 §13 | Expressions: arithmetic, logical, member access, calls | partial | `go/js/js_test.go` TestEvalPrimitives, TestFunctionCall | Basic operators + calls observed; assignment forms, destructuring, spread, optional chaining unverified |
+| ECMA-262 §14–§15 | Statements + declarations: expression statements, `var`, `for`/`while`, `throw`, function declarations | partial | `go/js/js_test.go` TestTimeLimit (`while`), TestOracleErrors (`throw`), `go/js/heap_test.go` (`var`/`for`) | Observed forms only; `switch`, `for-of`, `try-catch`, class declarations, block-scoping corners unverified row-by-row |
+| ECMA-262 §10/§20 | Functions + closures, objects + prototypes | partial | `go/js/js_test.go` TestFunctionCall, TestObjectHandles, TestGlobalFunc | Plain closures, property get, handle round-trip; classes, generators, async functions, `Proxy`/`Reflect` unverified |
+| ECMA-262 §20.5 | Error objects + oracle error shape (`browser-lite: js error: …`) | done | `go/js/js_test.go` TestOracleErrors (5 byte-exact goldens) | SyntaxError/ReferenceError/Error/throw-string/null-property pinned |
+| ECMA-262 §9 (host-defined) | Host embedding: Eval/Call/Get/Free/SetGlobalFunc, handle registry | done | `go/js/js_test.go` TestObjectHandles, TestFunctionCall, TestGlobalFunc | Registry lifecycle pinned incl. use-after-Free error |
+| Embedding (non-ECMA) | Evaluation bounds: time limit (S5), heap cap | done | `go/js/js_test.go` TestTimeLimit, `go/js/heap_test.go` (×2) | Interrupt + OOM surface as oracle-format errors; default 128 MB cap |
+| ECMA-262 §27 | Promises/async + job queue | absent | — | Synchronous Eval only; no microtask pumping — also gates the `fetch()` API row (see §8) |
+| ECMA-262 §16 | Modules (`import`/`export`, loader, linking) | absent | — | Eval is classic-script only; no module record or resolver |
+| ECMA-402 | `Intl` API surface | absent | — | No `Intl` object exposed; 13th-ed snapshot on shelf, behaviour none |
 
 ---
 
