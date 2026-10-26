@@ -21,8 +21,13 @@ import (
 //
 // Members the fixtures name but the oracle never implemented
 // (getElementById, querySelector(All), createElement, innerHTML, cookie,
-// timers, per-node events, document.body/activeElement) stay missing here
-// too, so the same engine-native exceptions keep the differential identical.
+// timers, per-node events, document.body/activeElement) stay missing from
+// THIS surface too, so the same engine-native exceptions keep the
+// differential identical for runtimes without BindDOM. The S1 DOM track
+// (dom-apis-track, go/js/dom.go) adds getElementById, querySelector(All),
+// classList, className, innerHTML/textContent, attributes, createElement,
+// appendChild/removeChild, closest/matches and document.body on top via
+// BindDOM — a deliberate divergence recorded in KNOWN_DIFFS.md.
 //
 // A Runtime carries web bindings only after Bind, which mirrors
 // JsRuntime::new: install document/navigator, run the bootstrap, seed the URL.

@@ -146,8 +146,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err := rt.Bind(title, pageURL); err != nil {
 		fmt.Fprintf(stderr, "browser-lite: js location: %s\n", err)
 	}
+	// T1 (dom-apis-track S1): the DOM surface over the live tree. A BindDOM
+	// failure degrades to the oracle surface (scripts throw the oracle
+	// TypeErrors); it never stops the remaining scripts.
+	if err := rt.BindDOM(doc); err != nil {
+		fmt.Fprintf(stderr, "browser-lite: js dom: %s\n", err)
+	}
 	runPageScripts(doc, rt, stderr)
 	title = rt.Title()
+	// T1 re-render: scripts run after style resolution in oracle order
+	// (src/main.rs:82-109), which is safe for the oracle because its
+	// scripts cannot touch the DOM. Ours now can (classes, text, tree),
+	// so recompute styles on the mutated tree before layout — but only
+	// when a script actually mutated something (DomDirty).
+	if rt.DomDirty() {
+		var recomputeErr error
+		styles, _, recomputeErr = css.ComputeDocument(domIndex{doc}, inputs, viewportWidth, base)
+		if recomputeErr != nil {
+			fmt.Fprintf(stderr, "browser-lite: %s\n", recomputeErr)
+			return 1
+		}
+	}
 
 	images := layout.LoadImages(doc, styles, base)
 	l := layout.RenderWithImages(doc, styles, viewportWidth, images)

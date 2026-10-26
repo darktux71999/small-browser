@@ -305,7 +305,10 @@ func TestBindFixtureDemoErrors(t *testing.T) {
 }
 
 // missingAPIsMatchOracle: fixture members the oracle never implemented stay
-// missing here too — the same exceptions keep the differential identical.
+// missing on the Bind-only surface too — the same exceptions keep the
+// differential identical for runtimes without BindDOM. (BindDOM deliberately
+// adds the S1 DOM members; see go/js/dom.go and KNOWN_DIFFS.md. Timers,
+// cookies and per-node events stay missing until T2.)
 func TestBindMissingAPIsMatchOracle(t *testing.T) {
 	cases := []struct {
 		name   string

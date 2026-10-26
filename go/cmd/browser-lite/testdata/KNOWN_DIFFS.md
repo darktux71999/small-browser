@@ -36,6 +36,10 @@ Go engine. **Resolution (2026-10-25): ported** — script evaluation with
 the oracle's exact 7-member JS surface and error semantics; the JS-domain
 streams closed. Residual fixture diffs belong to the geometry categories
 (line-height semantics, var(), SVG/inline atoms) as registered above.
+**Amendment (2026-10-26, dom-apis-track T1):** the 9 rows below pre-date
+the DOM track. Four of them re-diverge by design under the new "real DOM
+APIs" category at the bottom of this file (Go now succeeds where the
+oracle errors); the other five are unchanged.
 
 ## Category: noscript policy (leading-fidelity S2)
 
@@ -197,7 +201,6 @@ Dropped features are listed in the `go/svg` package comment. Reference:
 categories above, which are unchanged.
 
 ## Category: inline replaced and inline-block boxes (meta1 atomic inline)
-
 The Go engine lays out atomic inline boxes in the line of their text run
 (CSS 2.1 §10.8, §10.3.9). An inline `<svg>` is a replaced box rasterized by
 go/svg and painted through the image path, sitting on the text baseline. An
@@ -214,3 +217,35 @@ background-image now resolves against the document base instead of
 `browser-lite://inline/`, so `probe-svg-img`'s stderr warning disappears.
 Spec and divergence decision: `odd/tasks/meta1-codeberg.md` (the SVG gap
 briefing). Orthogonal to the categories above.
+
+## Category: real DOM APIs (dom-apis-track S1, deliberate divergence)
+
+The Go engine now implements the S1 DOM core surface over the live tree:
+`getElementById`, `querySelector(All)` (reusing the shared selector
+engine), `classList` (add/remove/toggle/contains), `className`,
+`innerHTML`/`textContent` get+set (fragment case approximated via
+x/net/html, like go/dom's noscript re-parse), attributes,
+`createElement`, `appendChild`/`removeChild`, `closest`/`matches`, and
+`document.body` — WHATWG semantics where implemented, approximations cited
+in `go/js/dom.go`. Scripts that mutate the tree set a dirty flag and the
+pipeline recomputes styles after scripts (oracle order kept:
+src/main.rs:82-109 is safe for the oracle only because its scripts cannot
+touch the DOM). The frozen Rust oracle has no DOM APIs at all, so **by
+design** every fixture whose scripts touch the DOM now succeeds in Go where
+the oracle errors. Reference: `odd/tasks/dom-apis-track.md` (S1).
+Orthogonal to the categories above, which are unchanged.
+
+Measured blast radius (old-Go vs new-Go differential, 80 fixtures, T1
+verified): exactly 4 rows change, all in the JS domain —
+- `cookie-echo.html`: +dump-stderr +png-stderr (renders "sent: none").
+- `cookie-set.html`: +dump-stderr +png-stderr (renders "cookie requested").
+- `js-dom.html`: was fully identical, now DIFF in
+  dump-stdout/dump-stderr/png-stdout/png-stderr/png (script-built h1/card
+  render).
+- `net-utf8.html`: +dump-stderr +png-stderr (script-set text lands).
+Deliberately unchanged: `demo.html` (still the oracle SyntaxError),
+`events.html` (still byte-identical `TypeError: not a function` — now
+thrown by the T2-owned per-node `addEventListener` instead of
+`getElementById`), `timers.html` (still `ReferenceError: setTimeout` —
+T2 owns timers), `js-window.html` and `js-window-error.html` (no DOM APIs
+in their scripts). No other fixture's diff set changes.

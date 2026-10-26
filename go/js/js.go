@@ -28,6 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"browser-lite/dom"
 )
 
 // DefaultTimeLimit bounds every Eval when the caller sets no limit (S5
@@ -133,6 +135,9 @@ type Runtime struct {
 	closed   bool
 
 	webTitle string // T2: last good document.title (Title's fallback)
+
+	domDoc   *dom.Document // T1: live tree for BindDOM (nil until bound)
+	domDirty atomic.Bool   // T1: set by DOM mutations (see DomDirty)
 }
 
 // runtimes maps integer cookies back to Go runtimes for the C callbacks.
@@ -484,9 +489,14 @@ func jsgoGoCall(rtCookie unsafe.Pointer, magic C.int, ctx unsafe.Pointer,
 	args := make([]Value, 0, int(argc))
 	for i := 0; i < int(argc); i++ {
 		var slot [16]byte
+		// Borrowed: jsgo_arg_at_into copies the JSValue struct without
+		// taking a reference, so the slot must NOT be freed here (T1 fix:
+		// freeing a borrowed string/object arg underflows its refcount
+		// and use-after-frees on a later Eval; freeing immediates was a
+		// no-op, so dropping the free changes no existing behavior).
+		// toValue dups objects into the registry when it must retain one.
 		C.jsgo_arg_at_into(argv, C.int(i), unsafe.Pointer(&slot[0]))
 		args = append(args, r.toValue(&slot))
-		C.jsgo_free_val(r.ctx, unsafe.Pointer(&slot[0]))
 	}
 	out, err := fn(args)
 	if err != nil {
