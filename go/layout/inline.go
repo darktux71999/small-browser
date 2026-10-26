@@ -114,14 +114,6 @@ func isSVG(doc *dom.Document, id dom.NodeID) bool {
 	return !node.IsText && strings.EqualFold(node.Tag, "svg")
 }
 
-// lineAscent is the baseline offset inside a text line box of height lineH:
-// the half-leading plus the ascent. The text package exposes no font metrics,
-// so the ascent is taken as 0.8em and the descent as 0.2em, which centres the
-// em box in the line. Text and atomic boxes on one line share this one value.
-func lineAscent(lineH, fontSize float64) float64 {
-	return lineH/2 + 0.3*fontSize
-}
-
 // inlineAtom is one atomic inline box, measured before line breaking. Its
 // margin box is ml+w+mr wide and mt+h+mb tall; the border box sits between
 // the margins, its bottom margin edge on the baseline (CSS 2.1 §10.8.1).
@@ -158,9 +150,10 @@ type inlineTok struct {
 
 // inlinePiece is one placed piece of a line: a text run or an atom.
 type inlinePiece struct {
-	text string
-	atom *inlineAtom
-	w, h float64
+	text     string
+	atom     *inlineAtom
+	w, h     float64
+	baseline float64
 }
 
 // flushInline lays out a block container's inline run at (x, y) inside width
@@ -211,7 +204,7 @@ func (st *state) tokenizeInline(doc *dom.Document, styles []css.Style, style *cs
 		if word.Len() == 0 {
 			return
 		}
-		w, _ := st.measureInline(style, word.String())
+		w, _, _ := st.measureInline(style, word.String())
 		toks = append(toks, inlineTok{kind: tokWord, text: word.String(), w: w})
 		word.Reset()
 	}
@@ -240,8 +233,8 @@ func (st *state) tokenizeInline(doc *dom.Document, styles []css.Style, style *cs
 // spaceWidth is the advance of one inter-word space in the style's font: the
 // difference between "a a" and "aa", which isolates the space glyph.
 func (st *state) spaceWidth(style *css.Style) float64 {
-	spaced, _ := st.measureInline(style, "a a")
-	joined, _ := st.measureInline(style, "aa")
+	spaced, _, _ := st.measureInline(style, "a a")
+	joined, _, _ := st.measureInline(style, "aa")
 	if spaced <= joined {
 		return 0
 	}
@@ -293,8 +286,8 @@ func (st *state) placeLine(doc *dom.Document, styles []css.Style, style *css.Sty
 		if text.Len() == 0 {
 			return
 		}
-		w, h := st.measureInline(style, text.String())
-		pieces = append(pieces, inlinePiece{text: text.String(), w: w, h: h})
+		w, h, baseline := st.measureInline(style, text.String())
+		pieces = append(pieces, inlinePiece{text: text.String(), w: w, h: h, baseline: baseline})
 		text.Reset()
 	}
 	for _, t := range line {
@@ -319,11 +312,16 @@ func (st *state) placeLine(doc *dom.Document, styles []css.Style, style *css.Sty
 			textH = max(textH, p.h)
 		}
 	}
-	var asc, desc float64
-	textAsc := 0.0
+	var asc, desc, textAsc float64
 	if hasText {
-		textAsc = lineAscent(textH, style.FontSize)
-		asc, desc = textAsc, textH-textAsc
+		for _, p := range pieces {
+			if p.atom != nil {
+				continue
+			}
+			textAsc = max(textAsc, p.baseline)
+			desc = max(desc, p.h-p.baseline)
+		}
+		asc = textAsc
 	}
 	for _, p := range pieces {
 		if p.atom != nil {
@@ -377,12 +375,13 @@ func alignOffset(style *css.Style, width, lineW float64) float64 {
 
 // measureInline measures text on one unwrapped line: its advance and the
 // line height Pango reports for the style.
-func (st *state) measureInline(style *css.Style, text string) (w, h float64) {
+func (st *state) measureInline(style *css.Style, text string) (w, h, baseline float64) {
 	m := st.shaper.Measure(text, adaptStyle(style), nowrapWidth)
 	for _, line := range m.Lines {
 		w = max(w, line.W)
+		baseline = max(baseline, line.Baseline)
 	}
-	return w, m.Height
+	return w, m.Height, baseline
 }
 
 // prepareAtom measures one atomic box. A replaced element takes its decoded

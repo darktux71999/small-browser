@@ -735,3 +735,14 @@ sería bug de anchura de caja y se corrige ahí.
   pendiente de alcance) es lo que cerraría esa banda a favor de Firefox. Resto
   de bandas: 0:24.95 · 2-5: 8.5-12.2 · 8-11: 8.5-18.9 · 12:31.0 (transición
   about/stats — el siguiente hueco de métrica) · 13-23: 0.87-12.06.
+- **L33** (2026-10-25): **POLÍTICA DE MÉTODO — norte: el estándar web** (decisión
+  del usuario): «deberíamos seguir lo que hace este navegador [Nordstjernen] —
+  se apegua al estándar web ya hecho». La brújula del proyecto pasa a ser la
+  **conformidad con los estándares** (WHATWG HTML/CSS/WPT — la spec, sección a
+  sección, como hace Nordstjernen con sus 141 filas de spec + scoreboards WPT),
+  con el diff visual contra Firefox como comprobación secundaria, no como norte.
+  **Regla de referencia**: Nordstjernen es solo INSPIRACIÓN («solo nos podemos
+  inspirar en como lo hace») y la referencia de estándar para dudas — nunca
+  copia (licencia NSL/GPL; NSL prohíbe «competing use»). Próximo paso natural:
+  un harness de estilo WPT para browser-lite (slices `url/`, `dom/nodes`,
+  `timers` con testharness.js) como métrica de conformidad.

@@ -290,6 +290,43 @@ func TestLineHeightIntegration(t *testing.T) {
 	}
 }
 
+func TestNaturalLineHeightRippleIncludesOnlyContentHeight(t *testing.T) {
+	doc, _, l := cascade(t, `<style>
+		html, body { margin: 0; padding: 0 }
+		body { font-family: "Noto Sans", sans-serif; font-size: 16px; line-height: normal }
+		.card { width: 220px; padding: 7px 5px; border: 2px solid }
+		#fixed { line-height: 1.2 }
+	</style><div id="normal" class="card">Measure this card</div><div id="fixed" class="card">Measure this card</div>`)
+	normal := boxFor(t, l, doc, "#normal")
+	fixed := boxFor(t, l, doc, "#fixed")
+	if normal.W != fixed.W {
+		t.Fatalf("same padded card width changed: normal=%v fixed=%v", normal.W, fixed.W)
+	}
+	if delta := normal.H - fixed.H; delta < 2 || delta > 4 {
+		t.Fatalf("natural line-height should add only its content-height delta (2-4px), got normal=%v fixed=%v delta=%v", normal.H, fixed.H, delta)
+	}
+}
+
+func TestSpecifiedHeightCapsNaturalTextGrowthInBothBoxSizingModes(t *testing.T) {
+	doc, _, l := cascade(t, `<style>
+		html, body { margin: 0; padding: 0 }
+		body { font-family: "Noto Sans", sans-serif; font-size: 16px; line-height: normal }
+		#content-box { box-sizing: content-box; height: 20px; padding: 4px 0; border: 1px solid }
+		#border-box { box-sizing: border-box; height: 30px; padding: 4px 0; border: 1px solid }
+	</style><div id="content-box">Text may overflow</div><div id="border-box">Text may overflow</div>`)
+	contentBox := boxFor(t, l, doc, "#content-box")
+	borderBox := boxFor(t, l, doc, "#border-box")
+	if contentBox.H != 30 {
+		t.Errorf("content-box height = %v, want declared 20px content + 8px padding + 2px border = 30px", contentBox.H)
+	}
+	if borderBox.H != 30 {
+		t.Errorf("border-box height = %v, want declared 30px border box", borderBox.H)
+	}
+	if borderBox.Y != contentBox.Y+contentBox.H {
+		t.Errorf("following box y = %v, want fixed content-box bottom %v", borderBox.Y, contentBox.Y+contentBox.H)
+	}
+}
+
 func TestFlexRowDoesNotStackItemsAsBlock(t *testing.T) {
 	// T4b owns flex: a row container shares one row instead of stacking
 	// its items like the old plain-block fallback did.

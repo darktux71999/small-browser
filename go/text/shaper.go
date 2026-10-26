@@ -60,12 +60,21 @@ static void textgo_free(textgo_ctx *c) {
 // tracking the oracle sets in pango::create_layout (src/layout.rs:1828-1902).
 // NUL would truncate the C string, so the caller replaces it with a space
 // first; the explicit length is then redundant and -1 is equivalent.
-// line_height_absolute is the CSS used value (font-size x factor,
-// text.LineHeightAbsolute) in Pango units: CSS 2.1 scales the font-size,
-// not the font's natural height (S1).
+// line_height_absolute is the CSS used value for numeric line-height. Normal
+// uses the Pango font metrics' recommended natural logical height instead.
+static void textgo_font_metrics(PangoContext *ctx, const char *family,
+		int size_pango, int weight, int italic,
+		int *ascent, int *descent, int *height);
+static int textgo_natural_line_height(PangoFontMetrics *metrics) {
+	int height = pango_font_metrics_get_height(metrics);
+	int extents = pango_font_metrics_get_ascent(metrics) + pango_font_metrics_get_descent(metrics);
+	// Some hinted fonts report a recommended height one Pango pixel below
+	// their separately rounded ascent+descent; natural leading cannot be negative.
+	return height > extents ? height : extents;
+}
 static PangoLayout *textgo_layout_new(PangoContext *ctx, const char *text, const char *family,
 		int size_pango, int weight, int italic, int width_pango, int align, int justify,
-		int line_height_absolute, int has_spacing, int spacing_pango) {
+		int line_height_absolute, int line_height_normal, int has_spacing, int spacing_pango) {
 	PangoLayout *layout = pango_layout_new(ctx);
 	if (!layout) {
 		return NULL;
@@ -76,6 +85,13 @@ static PangoLayout *textgo_layout_new(PangoContext *ctx, const char *text, const
 	pango_font_description_set_weight(desc, (PangoWeight)weight);
 	pango_font_description_set_style(desc, italic ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
 	pango_layout_set_font_description(layout, desc);
+	if (line_height_normal) {
+		PangoFontMetrics *metrics = pango_context_get_metrics(ctx, desc, pango_language_get_default());
+		if (metrics) {
+			line_height_absolute = textgo_natural_line_height(metrics);
+			pango_font_metrics_unref(metrics);
+		}
+	}
 	pango_font_description_free(desc);
 	pango_layout_set_text(layout, text, -1);
 	pango_layout_set_width(layout, width_pango);
@@ -84,9 +100,9 @@ static PangoLayout *textgo_layout_new(PangoContext *ctx, const char *text, const
 		pango_layout_set_justify(layout, TRUE);
 	}
 	// Line height and tracking are attributes in Pango 1.58: the layout has
-	// no setter for them (src/layout.rs:1884-1898). The line height is the
-	// absolute CSS used value in Pango units; the factor variant would
-	// scale the font's natural height instead of the font-size (S1).
+	// no setter for them (src/layout.rs:1884-1898). Numeric CSS line-height
+	// uses an absolute font-size-scaled value; normal uses Pango's natural
+	// logical metric height. The factor attribute instead scales natural height.
 	PangoAttrList *attrs = pango_attr_list_new();
 	pango_attr_list_insert(attrs, pango_attr_line_height_new_absolute(line_height_absolute));
 	if (has_spacing) {
@@ -101,6 +117,25 @@ static void textgo_layout_free(PangoLayout *layout) {
 	g_object_unref(layout);
 }
 
+static void textgo_font_metrics(PangoContext *ctx, const char *family,
+		int size_pango, int weight, int italic,
+		int *ascent, int *descent, int *height) {
+	PangoFontDescription *desc = pango_font_description_from_string("Sans");
+	pango_font_description_set_family(desc, family);
+	pango_font_description_set_size(desc, size_pango);
+	pango_font_description_set_weight(desc, (PangoWeight)weight);
+	pango_font_description_set_style(desc, italic ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
+	PangoFontMetrics *metrics = pango_context_get_metrics(ctx, desc, pango_language_get_default());
+	*ascent = *descent = *height = 0;
+	if (metrics) {
+		*ascent = pango_font_metrics_get_ascent(metrics);
+		*descent = pango_font_metrics_get_descent(metrics);
+		*height = textgo_natural_line_height(metrics);
+		pango_font_metrics_unref(metrics);
+	}
+	pango_font_description_free(desc);
+}
+
 static void textgo_pixel_size(PangoLayout *layout, int *w, int *h) {
 	pango_layout_get_pixel_size(layout, w, h);
 }
@@ -109,7 +144,9 @@ static int textgo_line_count(PangoLayout *layout) {
 	return pango_layout_get_line_count(layout);
 }
 
-// One visual line as Pango placed it. The struct crosses cgo by value, so
+// One visual line as Pango placed it. Baseline is relative to the line's
+// logical top and carries the actual font metrics into inline atom placement.
+// The struct crosses cgo by value, so
 // no Go pointer ever reaches C. extents/positions follow the oracle's reads
 // (src/layout.rs:1702-1719): logical extents in whole pixels, absolute
 // position from index_to_pos in Pango units.
@@ -118,12 +155,13 @@ typedef struct {
 	int y;
 	int w;
 	int h;
+	int baseline;
 	int start;
 	int len;
 } textgo_line;
 
 static textgo_line textgo_line_info(PangoLayout *layout, int index) {
-	textgo_line out = {0, 0, 0, 0, 0, 0};
+	textgo_line out = {0, 0, 0, 0, 0, 0, 0};
 	PangoLayoutLine *line = pango_layout_get_line(layout, index);
 	if (!line) {
 		return out;
@@ -137,6 +175,16 @@ static textgo_line textgo_line_info(PangoLayout *layout, int index) {
 	int start = line->start_index > 0 ? line->start_index : 0;
 	int len = line->length > 0 ? line->length : 0;
 	pango_layout_index_to_pos(layout, start, &pos);
+	PangoLayoutIter *iter = pango_layout_get_iter(layout);
+	for (int i = 0; i < index; i++) {
+		if (!pango_layout_iter_next_line(iter)) {
+			break;
+		}
+	}
+	PangoRectangle iter_ink, iter_logical;
+	pango_layout_iter_get_line_extents(iter, &iter_ink, &iter_logical);
+	out.baseline = pango_layout_iter_get_baseline(iter) - iter_logical.y;
+	pango_layout_iter_free(iter);
 	out.x = pos.x;
 	out.y = pos.y;
 	out.w = logical.width;
@@ -216,10 +264,10 @@ type Style struct {
 	FontWeight uint32
 	// Italic is font-style italic (or oblique).
 	Italic bool
-	// LineHeight: unitless CSS ratio (go/css resolves normal, inherit and
-	// percentages to 1.2). Measure scales the font-size by it into the
-	// absolute line box (S1), never the font's natural height.
+	// LineHeight is the unitless CSS ratio for numeric/dimension values.
 	LineHeight float64
+	// LineHeightNormal selects the Pango font's natural logical line height.
+	LineHeightNormal bool
 	// TextAlign selects the Pango alignment (Justify keeps left alignment
 	// plus the justify flag).
 	TextAlign Align
@@ -230,14 +278,23 @@ type Style struct {
 // Line is one visual line as Pango placed it, relative to the run origin.
 type Line struct {
 	X, Y, W, H float64
-	Text       string
+	// Baseline is Pango's actual baseline offset from this line's logical top.
+	Baseline float64
+	Text     string
+}
+
+// FontMetrics are the resolved Pango font's typographic ascent, descent, and
+// recommended natural line height, in CSS pixels.
+type FontMetrics struct {
+	Ascent, Descent, Height float64
 }
 
 // Measured is a wrapped run: its total height plus one entry per visual
 // line, mirroring MeasuredText (src/layout.rs:1650-1653).
 type Measured struct {
-	Height float64
-	Lines  []Line
+	Height  float64
+	Metrics FontMetrics
+	Lines   []Line
 }
 
 // Shaper is a Pango context used only for measuring. It hangs off a scratch
@@ -314,15 +371,24 @@ func (s *Shaper) Measure(text string, style Style, width float64) Measured {
 	layout := C.textgo_layout_new(s.ctx.ctx, ctext, cfamily,
 		C.int(size*PangoScale), C.int(w), C.int(italic),
 		C.int(wpx*PangoScale), C.int(align), C.int(justify),
-		C.int(LineHeightAbsolute(size, style.LineHeight)), C.int(hasSpacing), C.int(spacing))
+		C.int(LineHeightAbsolute(size, style.LineHeight)), C.int(boolInt(style.LineHeightNormal)), C.int(hasSpacing), C.int(spacing))
 	if layout == nil {
 		return Measured{}
 	}
 	defer C.textgo_layout_free(layout)
 
+	var ascent, descent, naturalHeight C.int
+	C.textgo_font_metrics(s.ctx.ctx, cfamily, C.int(size*PangoScale), C.int(w), C.int(italic), &ascent, &descent, &naturalHeight)
 	var pw, ph C.int
 	C.textgo_pixel_size(layout, &pw, &ph)
-	out := Measured{Height: float64(ph)}
+	out := Measured{
+		Height: float64(ph),
+		Metrics: FontMetrics{
+			Ascent:  float64(ascent) / PangoScale,
+			Descent: float64(descent) / PangoScale,
+			Height:  float64(naturalHeight) / PangoScale,
+		},
+	}
 	count := int(C.textgo_line_count(layout))
 	raw := []byte(text)
 	for i := 0; i < count; i++ {
@@ -333,14 +399,22 @@ func (s *Shaper) Measure(text string, style Style, width float64) Measured {
 			slice = string(raw[start : start+length])
 		}
 		out.Lines = append(out.Lines, Line{
-			X:    float64(info.x) / PangoScale,
-			Y:    float64(info.y) / PangoScale,
-			W:    float64(info.w),
-			H:    float64(info.h),
-			Text: strings.TrimSpace(slice),
+			X:        float64(info.x) / PangoScale,
+			Y:        float64(info.y) / PangoScale,
+			W:        float64(info.w),
+			H:        float64(info.h),
+			Baseline: float64(info.baseline) / PangoScale,
+			Text:     strings.TrimSpace(slice),
 		})
 	}
 	return out
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // familyStack mirrors the oracle's stack choice (src/layout.rs:1844-1848):

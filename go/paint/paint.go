@@ -270,14 +270,14 @@ static void paint_draw_image(paint_t *p, cairo_surface_t *img,
 // One text run, rebuilt from the run's typography exactly like the measuring
 // shaper builds it (72dpi, same family/weight/style/width/alignment/line
 // height/tracking): the painted lines land where the boxes measured them.
-// line_height_absolute is the CSS used value (font-size x factor,
-// text.LineHeightAbsolute) in Pango units, the same projection Measure sets
-// (S1).
+// line_height_absolute is the numeric CSS used value (font-size x factor,
+// text.LineHeightAbsolute) in Pango units. The separate normal flag selects
+// the same metric-derived natural height as the measuring shaper.
 static void paint_show_text(paint_t *p, PangoContext *ctx,
 		const char *text, const char *family,
 		int size_pango, int weight, int italic,
 		int width_pango, int align, int justify,
-		int line_height_absolute, int has_spacing, int spacing_pango,
+		int line_height_absolute, int line_height_normal, int has_spacing, int spacing_pango,
 		double x, double y,
 		double r, double g, double b, double a) {
 	PangoLayout *layout = pango_layout_new(ctx);
@@ -290,6 +290,16 @@ static void paint_show_text(paint_t *p, PangoContext *ctx,
 	pango_font_description_set_weight(desc, (PangoWeight)weight);
 	pango_font_description_set_style(desc, italic ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
 	pango_layout_set_font_description(layout, desc);
+	if (line_height_normal) {
+		PangoFontMetrics *metrics = pango_context_get_metrics(ctx, desc, pango_language_get_default());
+		if (metrics) {
+			int natural_height = pango_font_metrics_get_height(metrics);
+			int extents = pango_font_metrics_get_ascent(metrics) + pango_font_metrics_get_descent(metrics);
+			// Match the shaper when font metric rounding puts height below extents.
+			line_height_absolute = natural_height > extents ? natural_height : extents;
+			pango_font_metrics_unref(metrics);
+		}
+	}
 	pango_font_description_free(desc);
 	pango_layout_set_text(layout, text, -1);
 	pango_layout_set_width(layout, width_pango);
@@ -692,6 +702,10 @@ func showRun(p *C.paint_t, ctx *C.PangoContext, run *layout.TextRun) {
 	if size < 0 {
 		size = 0
 	}
+	naturalLineHeight := 0
+	if style.LineHeightNormal {
+		naturalLineHeight = 1
+	}
 	width := run.Width
 	if width < 1 {
 		width = 1
@@ -700,7 +714,7 @@ func showRun(p *C.paint_t, ctx *C.PangoContext, run *layout.TextRun) {
 	C.paint_show_text(p, ctx, ctext, cfamily,
 		C.int(size*text.PangoScale), C.int(weight), C.int(italic),
 		C.int(width*text.PangoScale), C.int(align), C.int(justify),
-		C.int(text.LineHeightAbsolute(size, style.LineHeight)), C.int(hasSpacing), C.int(spacing),
+		C.int(text.LineHeightAbsolute(size, style.LineHeight)), C.int(naturalLineHeight), C.int(hasSpacing), C.int(spacing),
 		C.double(run.X), C.double(run.Y),
 		C.double(c.R), C.double(c.G), C.double(c.B), C.double(c.A))
 }
@@ -709,14 +723,15 @@ func showRun(p *C.paint_t, ctx *C.PangoContext, run *layout.TextRun) {
 // layout shaper consumes (the layout package's private adaptStyle, field
 // for field).
 type adaptedStyle struct {
-	FontFamilies  []string
-	FontSize      float64
-	FontWeight    uint32
-	Italic        bool
-	LineHeight    float64
-	TextAlign     text.Align
-	LetterSpacing float64
-	Color         css.Color
+	FontFamilies     []string
+	FontSize         float64
+	FontWeight       uint32
+	Italic           bool
+	LineHeight       float64
+	LineHeightNormal bool
+	TextAlign        text.Align
+	LetterSpacing    float64
+	Color            css.Color
 }
 
 // adaptStyle projects the computed style onto the painter's typography.
@@ -735,14 +750,15 @@ func adaptStyle(style *css.Style) adaptedStyle {
 		align = text.AlignJustify
 	}
 	return adaptedStyle{
-		FontFamilies:  families,
-		FontSize:      style.FontSize,
-		FontWeight:    style.FontWeight,
-		Italic:        style.Italic,
-		LineHeight:    style.LineHeight,
-		TextAlign:     align,
-		LetterSpacing: style.LetterSpacing,
-		Color:         style.Color,
+		FontFamilies:     families,
+		FontSize:         style.FontSize,
+		FontWeight:       style.FontWeight,
+		Italic:           style.Italic,
+		LineHeight:       style.LineHeight,
+		LineHeightNormal: style.LineHeightNormal,
+		TextAlign:        align,
+		LetterSpacing:    style.LetterSpacing,
+		Color:            style.Color,
 	}
 }
 

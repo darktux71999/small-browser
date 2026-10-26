@@ -142,3 +142,15 @@ runner `go test ./...` + runner diferencial (con divergencias documentadas).
   la franja viva de 11px; ambas variantes en /tmp/bl-m3). Caveat: bl-m1/bl-m2
   fueron borrados por limpieza de tmpfs — COMMANDS.sh reproduce todo. `Risk:
   none` (medición).
+- **L5** (2026-10-25): **Residuo `normal` RESUELTO** (luna — métricas de texto
+  tras el informe visual del usuario: «texto muy junto, letras mal colocadas en
+  las cajas»). `line-height: normal` pasa a **métrica natural de la fuente**
+  (Pango: ascent+descent+gap) en vez del factor 1.2 — el stride de 16px Noto
+  pasa de 20→**23px, exactamente el medido en Firefox**; baseline real de Pango
+  (ascent 18px, antes estimado 14.8px con la regla 0.8em); altura definida
+  corrige la inflación de cajas (32→30px en el pin). El modo normal vs factor
+  numérico queda distinguido en Style/mapping; pintado y medición comparten el
+  modo natural (helper único). Banda 12: 31→**25.84%**; página 1872→1819. El
+  golden de hello re-baselineado por el padre (20→23px de línea). La
+  concordancia con la referencia nueva (Nordstjernen `paint.c:3178-3237`, misma
+  semántica de natural con fallback por familia) valida el camino. `Risk: none`.

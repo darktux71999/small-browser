@@ -91,7 +91,7 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 	if len(items) == 0 {
 		var height float64
 		if style.Height != nil {
-			height = max(*style.Height, 0)
+			height = specifiedBorderHeight(style)
 		}
 		st.out.Boxes[boxIndex].H = height
 		if style.PositionRelative || style.PositionAbsolute {
@@ -301,7 +301,7 @@ func (st *state) layoutGridContainer(doc *dom.Document, styles []css.Style, id d
 
 	borderH := contentHeight + style.Padding[0] + style.Padding[2] + style.BorderWidth[0] + style.BorderWidth[2]
 	if style.Height != nil {
-		borderH = max(borderH, *style.Height)
+		borderH = specifiedBorderHeight(style)
 	}
 	st.out.Boxes[boxIndex].H = max(borderH, 0)
 	if style.PositionRelative || style.PositionAbsolute {

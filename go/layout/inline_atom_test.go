@@ -12,6 +12,7 @@ import (
 	"browser-lite/css"
 	"browser-lite/dom"
 	"browser-lite/img"
+	"browser-lite/text"
 )
 
 // pageWithImages cascades html and lays it out with the fixture directory
@@ -69,8 +70,8 @@ func TestInlineSVGIsReplacedBoxOnTextBaseline(t *testing.T) {
 	if ic.X < before.X+before.W-1 {
 		t.Fatalf("svg at x=%v overlaps the text before it (ends %v)", ic.X, before.X+before.W)
 	}
-	if ic.Y+ic.H != textBaseline(before) {
-		t.Fatalf("svg bottom %v, want the text baseline %v", ic.Y+ic.H, textBaseline(before))
+	if ic.Y+ic.H != textBaseline(t, before) {
+		t.Fatalf("svg bottom %v, want the text baseline %v", ic.Y+ic.H, textBaseline(t, before))
 	}
 	after := textBoxAt(t, l, "there")
 	if after.X < ic.X+ic.W-1 {
@@ -96,8 +97,20 @@ func TestImageInsideInlineBlockGetsBox(t *testing.T) {
 	}
 }
 
-// textBaseline is the baseline the atomic boxes sit on: the text line's
-// top plus its ascent. It is the single definition the layout uses.
-func textBaseline(b *LayoutBox) float64 {
-	return b.Y + lineAscent(b.H, b.FontSize)
+// textBaseline independently measures the public Pango baseline used to align
+// the atomic boxes with their surrounding text.
+func textBaseline(t *testing.T, b *LayoutBox) float64 {
+	t.Helper()
+	s, err := text.New()
+	if err != nil {
+		t.Fatalf("text.New: %v", err)
+	}
+	defer s.Close()
+	m := s.Measure(b.Text, text.Style{
+		FontFamilies:     []string{"sans-serif"},
+		FontSize:         b.FontSize,
+		FontWeight:       400,
+		LineHeightNormal: true,
+	}, 1000)
+	return b.Y + m.Lines[0].Baseline
 }

@@ -444,6 +444,29 @@ func TestEveryNodeGetsAStyleAndDefaultsAreStable(t *testing.T) {
 	}
 }
 
+func TestLineHeightNormalRemainsFontDependent(t *testing.T) {
+	normal := styleOf(t, `<p id="x">x</p>`, "#x")
+	if !normal.LineHeightNormal {
+		t.Fatalf("default line-height normal was flattened to factor %v", normal.LineHeight)
+	}
+	keyword := styleOf(t, `<style>p { line-height: normal }</style><p id="x">x</p>`, "#x")
+	if !keyword.LineHeightNormal {
+		t.Fatalf("line-height: normal was flattened to factor %v", keyword.LineHeight)
+	}
+	explicit := styleOf(t, `<style>p { line-height: 1.2 }</style><p id="x">x</p>`, "#x")
+	if explicit.LineHeightNormal || !near(explicit.LineHeight, 1.2) {
+		t.Fatalf("explicit unitless factor lost: normal=%v factor=%v", explicit.LineHeightNormal, explicit.LineHeight)
+	}
+	inheritedNormal := styleOf(t, `<style>p { line-height: normal } span { line-height: inherit }</style><p><span id="x">x</span></p>`, "#x")
+	if !inheritedNormal.LineHeightNormal {
+		t.Fatalf("inherited normal line-height became factor %v", inheritedNormal.LineHeight)
+	}
+	inheritedFactor := styleOf(t, `<style>p { line-height: 1.4 } span { line-height: inherit }</style><p><span id="x">x</span></p>`, "#x")
+	if inheritedFactor.LineHeightNormal || !near(inheritedFactor.LineHeight, 1.4) {
+		t.Fatalf("inherited unitless factor lost: normal=%v factor=%v", inheritedFactor.LineHeightNormal, inheritedFactor.LineHeight)
+	}
+}
+
 func TestMalformedStylesheetsAreSurvivable(t *testing.T) {
 	for _, html := range []string{
 		"<p id=x>x</p>",

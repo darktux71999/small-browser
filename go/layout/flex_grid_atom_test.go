@@ -35,8 +35,8 @@ func TestFlexAnonymousItemKeepsInlineSVGAtom(t *testing.T) {
 	if after.X < ic.X+ic.W-1 {
 		t.Fatalf("text after the svg starts at %v, before the svg ends at %v", after.X, ic.X+ic.W)
 	}
-	if ic.Y+ic.H != textBaseline(after) {
-		t.Fatalf("svg bottom %v, want the text baseline %v", ic.Y+ic.H, textBaseline(after))
+	if ic.Y+ic.H != textBaseline(t, after) {
+		t.Fatalf("svg bottom %v, want the text baseline %v", ic.Y+ic.H, textBaseline(t, after))
 	}
 	if !(ic.Y < after.Y+after.H && after.Y < ic.Y+ic.H) {
 		t.Fatalf("svg and text must share one line (svg y %v h %v vs text y %v h %v)", ic.Y, ic.H, after.Y, after.H)
@@ -58,8 +58,8 @@ func TestGridAnonymousItemKeepsInlineSVGAtom(t *testing.T) {
 	if after.X < ic.X+ic.W-1 {
 		t.Fatalf("text after the svg starts at %v, before the svg ends at %v", after.X, ic.X+ic.W)
 	}
-	if ic.Y+ic.H != textBaseline(after) {
-		t.Fatalf("svg bottom %v, want the text baseline %v", ic.Y+ic.H, textBaseline(after))
+	if ic.Y+ic.H != textBaseline(t, after) {
+		t.Fatalf("svg bottom %v, want the text baseline %v", ic.Y+ic.H, textBaseline(t, after))
 	}
 	if !(ic.Y < after.Y+after.H && after.Y < ic.Y+ic.H) {
 		t.Fatalf("svg and text must share one line (svg y %v h %v vs text y %v h %v)", ic.Y, ic.H, after.Y, after.H)

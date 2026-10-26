@@ -228,6 +228,7 @@ func copyComputedVarProperty(dst *Style, src Style, property string) {
 		dst.FontSize, dst.FontWeight = src.FontSize, src.FontWeight
 		dst.Bold, dst.Italic = src.Bold, src.Italic
 		dst.LineHeight = src.LineHeight
+		dst.LineHeightNormal = src.LineHeightNormal
 	case "font-family":
 		dst.FontFamily, dst.FontFamilies = src.FontFamily, src.FontFamilies
 	case "font-size":
@@ -238,6 +239,7 @@ func copyComputedVarProperty(dst *Style, src Style, property string) {
 		dst.Italic = src.Italic
 	case "line-height":
 		dst.LineHeight = src.LineHeight
+		dst.LineHeightNormal = src.LineHeightNormal
 	case "margin":
 		dst.Margin, dst.MarginAuto = src.Margin, src.MarginAuto
 	case "margin-top":

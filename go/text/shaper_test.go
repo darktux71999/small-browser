@@ -172,6 +172,34 @@ func TestMeasureLineHeightAbsolute(t *testing.T) {
 	}
 }
 
+func TestMeasureNormalLineHeightUsesFontMetrics(t *testing.T) {
+	s, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer s.Close()
+
+	normal := defaultStyle()
+	normal.LineHeightNormal = true
+	natural := s.Measure("MMMM", normal, 1000)
+	if natural.Metrics.Ascent <= 0 || natural.Metrics.Descent <= 0 || natural.Metrics.Height <= 0 {
+		t.Fatalf("Pango returned invalid natural metrics: %+v", natural.Metrics)
+	}
+	if len(natural.Lines) != 1 {
+		t.Fatalf("natural line should not wrap, got %d lines", len(natural.Lines))
+	}
+	line := natural.Lines[0]
+	if line.H < natural.Height || line.H-natural.Height > 1 || line.Baseline <= 0 || line.Baseline >= line.H {
+		t.Fatalf("natural line box/baseline inconsistent: total=%.4f line=%+v metrics=(ascent=%.4f descent=%.4f height=%.4f)", natural.Height, line, natural.Metrics.Ascent, natural.Metrics.Descent, natural.Metrics.Height)
+	}
+	t.Logf("Pango natural metrics: ascent=%.4f descent=%.4f height=%.4f, line=%+v total=%.4f", natural.Metrics.Ascent, natural.Metrics.Descent, natural.Metrics.Height, line, natural.Height)
+	factor := defaultStyle()
+	explicit := s.Measure("MMMM", factor, 1000)
+	if natural.Height <= explicit.Height {
+		t.Fatalf("normal line-height %v should use natural metrics, above explicit 1.2 factor %v (font metrics %+v)", natural.Height, explicit.Height, natural.Metrics)
+	}
+}
+
 func TestMeasureLetterSpacingWidens(t *testing.T) {
 	s, err := New()
 	if err != nil {

@@ -59,21 +59,28 @@ above and the 9 QuickJS rows.
 
 ## Category: line-height semantics (leading-fidelity S1)
 
-The Go engine now applies CSS 2.1 line-height: the unitless factor scales
-the **font-size** (Pango's absolute line-height attribute, value computed
-by one shared helper in `go/text` used by both the measuring shaper and
-the painter), not the font's natural logical height (ascent+descent+line
-gap) that Pango's factor attribute scales. The Rust oracle shares the old
-factor semantics and is frozen (`src/layout.rs:1887-1890`; the same fix is
-briefed to the external agent, 2026-10-25), so **by design** every
-text-heavy fixture's dump and PNG outputs now diverge from the oracle
-until the same fix lands there. Measured blast radius on the corpus: 66/71
-fixtures change. The fixtures that remain identical (no engine-side text
-runs, or text only created by scripts the Go engine does not evaluate):
-`border-radius`, `img-attrs`, `img-clamp`, `js-dom` (its only diffs stay
-the stderr-only QuickJS rows above), `net-latin1`. Spec and divergence
-decision: `odd/tasks/leading-fidelity.md` (S1). This category is
-orthogonal to the 9 QuickJS rows above, which are unchanged.
+The Go engine applies CSS 2.1 numeric line-height: a unitless factor scales
+the **font-size** through the shared `text.LineHeightAbsolute` projection, not
+the natural logical height that Pango's factor attribute scales. CSS `normal`
+and inherited `normal` remain a separate used-value mode: measurement and paint
+use `max(PangoFontMetrics.height, ascent+descent)` as the natural logical
+height, and inline atoms use Pango's measured baseline instead of a fixed 0.8em
+ascent estimate. On this host at 16px Noto Sans, Pango reports ascent 18px,
+descent 5px, and height 22px; the component sum is used as 23px because the
+reported height is one pixel below the logical extents. The Rust oracle shares
+the old factor behavior for both numeric factors and `normal`
+(`src/layout.rs:1887-1890`), so **by design** pages using normal line-height
+diverge until the same semantics land there. The earlier measured 66/71 corpus
+blast radius applied to the numeric-factor change only; the current blast
+radius was not remeasured in this task. Spec and divergence decision:
+`odd/tasks/leading-fidelity.md` (S1). This category is orthogonal to the
+QuickJS rows above, which are unchanged.
+
+The same metric update exposed an explicit-height sizing ripple: block layout
+previously treated `height` as a minimum, allowing natural text height to
+inflate fixed-height boxes. A definite content-box height now includes its
+vertical padding and borders once; border-box height remains the declared
+outer size, and overflowing text no longer changes following flow geometry.
 
 ## Category: margin collapsing (leading-fidelity S3)
 

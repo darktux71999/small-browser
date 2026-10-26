@@ -548,10 +548,10 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 
 	borderH := contentBottom - borderY + style.Padding[2] + style.BorderWidth[2]
 	if style.Height != nil {
-		borderH = max(borderH, *style.Height)
+		borderH = specifiedBorderHeight(style)
 	}
 	if f.height != nil {
-		borderH = max(borderH, *f.height)
+		borderH = max(*f.height, 0)
 	}
 	st.out.Boxes[boxIndex].H = max(borderH, 0)
 	if style.PositionRelative || style.PositionAbsolute {
@@ -560,6 +560,18 @@ func (st *state) layoutBlock(doc *dom.Document, styles []css.Style, id dom.NodeI
 	st.layoutAbsoluteChildren(doc, styles, id, absoluteChildren)
 
 	return blockResult{borderTop: borderY, borderBottom: borderY + max(borderH, 0), top: top, bottom: bottom}
+}
+
+// specifiedBorderHeight resolves CSS height to the outer border-box extent.
+// Auto content can overflow a definite height, but must not silently turn it
+// into a min-height; content-box adds padding and borders, border-box already
+// includes them.
+func specifiedBorderHeight(style *css.Style) float64 {
+	height := max(*style.Height, 0)
+	if !style.BorderBox {
+		height += style.Padding[0] + style.Padding[2] + style.BorderWidth[0] + style.BorderWidth[2]
+	}
+	return height
 }
 
 // contentBox is the box model of a block-level element: the rectangle its
@@ -897,14 +909,15 @@ func adaptStyle(style *css.Style) text.Style {
 		align = text.AlignJustify
 	}
 	return text.Style{
-		FontFamilies:  style.FontFamilies,
-		FontFamily:    style.FontFamily,
-		FontSize:      style.FontSize,
-		FontWeight:    style.FontWeight,
-		Italic:        style.Italic,
-		LineHeight:    style.LineHeight,
-		TextAlign:     align,
-		LetterSpacing: style.LetterSpacing,
+		FontFamilies:     style.FontFamilies,
+		FontFamily:       style.FontFamily,
+		FontSize:         style.FontSize,
+		FontWeight:       style.FontWeight,
+		Italic:           style.Italic,
+		LineHeight:       style.LineHeight,
+		LineHeightNormal: style.LineHeightNormal,
+		TextAlign:        align,
+		LetterSpacing:    style.LetterSpacing,
 	}
 }
 

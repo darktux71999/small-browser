@@ -39,11 +39,11 @@ func TestDumpHelloExact(t *testing.T) {
     body
       p#t
         #text "hello lite"
-LAYOUT 1000x52
-  [   0.0    0.0 1000.0   36.0] html
-  [   8.0   16.0  984.0   20.0] body
-  [   8.0   16.0  984.0   20.0] p
-  [   8.0   14.1   64.0   21.0] #text "hello lite"
+LAYOUT 1000x55
+  [   0.0    0.0 1000.0   39.0] html
+  [   8.0   16.0  984.0   23.0] body
+  [   8.0   16.0  984.0   23.0] p
+  [   8.0   16.0   64.0   23.0] #text "hello lite"
 title: hello
 `
 	if stdout.String() != want {

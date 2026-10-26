@@ -636,10 +636,13 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 	var lineHeightLength C.css_fixed
 	var lineHeightUnit C.css_unit
 	out.LineHeight = 1.2
+	out.LineHeightNormal = true
 	switch uint8(C.css_computed_line_height(style, &lineHeightLength, &lineHeightUnit)) {
 	case cssLineHeightNumber:
 		out.LineHeight = fixedToF64(lineHeightLength)
+		out.LineHeightNormal = false
 	case cssLineHeightDimension:
+		out.LineHeightNormal = false
 		if uint32(lineHeightUnit) == cssUnitPct {
 			out.LineHeight = 1.2
 		} else {
@@ -651,8 +654,9 @@ func mapStyle(style *C.css_computed_style, unitCtx *C.css_unit_ctx, isRoot bool)
 			}
 		}
 	default:
-		// inherit / normal
+		// inherit / normal retain the font-dependent CSS used value.
 		out.LineHeight = 1.2
+		out.LineHeightNormal = true
 	}
 
 	out.TextAlign = TextAlignLeft

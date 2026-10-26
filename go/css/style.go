@@ -359,9 +359,11 @@ type Style struct {
 	FontWeight uint32
 	// Italic is font-style italic (or oblique).
 	Italic bool
-	// LineHeight: a number (unitless ratio, px/font-size, or the 1.2
-	// default when normal/inherit).
+	// LineHeight is the unitless factor for numeric/dimension values.
 	LineHeight float64
+	// LineHeightNormal keeps CSS normal (including inherited normal) distinct
+	// from a numeric 1.2; layout and paint resolve it from Pango font metrics.
+	LineHeightNormal bool
 	// TextAlign, mapped from the computed value.
 	TextAlign TextAlign
 	// LetterSpacing in CSS pixels.
@@ -398,18 +400,19 @@ var black = Color{R: 0, G: 0, B: 0, A: 1}
 // New returns the default Style, mirroring css.rs::Style::default.
 func New() Style {
 	return Style{
-		Display:      DisplayInline,
-		Color:        black,
-		BorderRadius: [4]Radius{RadiusPx(0), RadiusPx(0), RadiusPx(0), RadiusPx(0)},
-		FontSize:     16,
-		FontFamily:   "Sans",
-		FontFamilies: []string{"sans-serif"},
-		FontWeight:   400,
-		Italic:       false,
-		LineHeight:   1.2,
-		TextAlign:    TextAlignLeft,
-		Bold:         false,
-		InlineAlign:  false,
+		Display:          DisplayInline,
+		Color:            black,
+		BorderRadius:     [4]Radius{RadiusPx(0), RadiusPx(0), RadiusPx(0), RadiusPx(0)},
+		FontSize:         16,
+		FontFamily:       "Sans",
+		FontFamilies:     []string{"sans-serif"},
+		FontWeight:       400,
+		Italic:           false,
+		LineHeight:       1.2,
+		LineHeightNormal: true,
+		TextAlign:        TextAlignLeft,
+		Bold:             false,
+		InlineAlign:      false,
 		FlexItem: FlexItemProps{
 			Grow:   0,
 			Shrink: 1,

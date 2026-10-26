@@ -1,6 +1,7 @@
 package paint_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"browser-lite/img"
 	"browser-lite/layout"
 	"browser-lite/paint"
+	"browser-lite/text"
 )
 
 func red() *css.Color { return &css.Color{R: 1, G: 0, B: 0, A: 1} }
@@ -218,6 +220,48 @@ func TestRenderPaintsTextRun(t *testing.T) {
 	}
 	if ink == 0 {
 		t.Fatalf("text run painted no ink")
+	}
+}
+
+func TestRenderNormalLineHeightMatchesNaturalPangoMetrics(t *testing.T) {
+	shaper, err := text.New()
+	if err != nil {
+		t.Fatalf("text.New: %v", err)
+	}
+	defer shaper.Close()
+
+	normal := css.New()
+	normal.FontFamilies = []string{"sans-serif"}
+	normal.FontSize = 16
+	normal.LineHeightNormal = true
+	normal.Color = css.Color{R: 0, G: 0, B: 0, A: 1}
+	metrics := shaper.Measure("Button", text.Style{
+		FontFamilies:     normal.FontFamilies,
+		FontSize:         normal.FontSize,
+		FontWeight:       normal.FontWeight,
+		LineHeight:       normal.LineHeight,
+		LineHeightNormal: true,
+	}, 160).Metrics
+	if metrics.Ascent <= 0 || metrics.Descent <= 0 || metrics.Height <= 0 {
+		t.Fatalf("test font has invalid natural metrics: %+v", metrics)
+	}
+
+	factor := normal
+	factor.LineHeightNormal = false
+	factor.LineHeight = metrics.Height / factor.FontSize
+	render := func(style css.Style) paint.Frame {
+		l := &layout.Layout{Width: 180, Height: 48, Runs: []layout.TextRun{{
+			X: 8, Y: 8, Width: 160, Text: "Button", Style: style,
+		}}}
+		f, err := paint.Render(l, nil)
+		if err != nil {
+			t.Fatalf("paint.Render: %v", err)
+		}
+		return f
+	}
+	got, want := render(normal), render(factor)
+	if got.Width != want.Width || got.Height != want.Height || !bytes.Equal(got.Pixels, want.Pixels) {
+		t.Fatalf("normal painting differs from an explicit factor matching Pango's natural height (%vpx)", metrics.Height)
 	}
 }
 
