@@ -13,7 +13,7 @@ func TestToARGBIntoPinsExactConversion(t *testing.T) {
 	f := paint.Frame{
 		Pixels: []byte{
 			255, 0, 0, 255, // opaque red   -> mem [0,0,255,255]
-			0, 0, 0, 0,   // transparent  -> mem [0,0,0,0]
+			0, 0, 0, 0, // transparent  -> mem [0,0,0,0]
 			255, 255, 255, 128, // half white -> mem [128,128,128,128]
 		},
 		Width:  3,

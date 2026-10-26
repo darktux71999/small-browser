@@ -735,7 +735,11 @@ func showRun(p *C.paint_t, ctx *C.PangoContext, run *layout.TextRun) {
 	var spanFamilies []*C.char
 	var spans []C.paint_span
 	if len(run.Spans) > 0 {
-		spanMem = C.malloc(C.size_t(len(run.Spans)) * C.size_t(C.sizeof_paint_span))
+		// Zeroed: every paint_span slot is assigned below except the
+		// style flag, which is only set for italic spans — malloc
+		// garbage there once painted random italics from recycled
+		// heap memory, diverging paint from the measured advances.
+		spanMem = C.calloc(C.size_t(len(run.Spans)), C.size_t(C.sizeof_paint_span))
 		if spanMem != nil {
 			defer C.free(spanMem)
 			spans = unsafe.Slice((*C.paint_span)(spanMem), len(run.Spans))

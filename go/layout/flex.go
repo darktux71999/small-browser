@@ -635,7 +635,7 @@ func maxContentWidth(doc *dom.Document, styles []css.Style, id dom.NodeID, st *s
 		return maxContentWidthRowFlex(style, doc, styles, id, st)
 	}
 	var width float64
-	var text strings.Builder
+	var run inlineRun
 	for _, child := range doc.Nodes[id].Children {
 		childStyle := &styles[child]
 		if childStyle.Display == css.DisplayNone || childStyle.PositionAbsolute {
@@ -648,12 +648,10 @@ func maxContentWidth(doc *dom.Document, styles []css.Style, id dom.NodeID, st *s
 		} else if childStyle.Display == css.DisplayBlock {
 			width = max(width, maxContentWidth(doc, styles, child, st))
 		} else {
-			collectInlineText(doc, child, &text)
+			collectInline(doc, styles, child, &run)
 		}
 	}
-	if strings.TrimSpace(text.String()) != "" {
-		width = max(width, naturalTextWidth(st, text.String(), style))
-	}
+	width = max(width, st.runMaxContentWidth(style, &run))
 	return width
 }
 
@@ -676,7 +674,7 @@ func maxContentWidthRowFlex(style *css.Style, doc *dom.Document, styles []css.St
 		if run.hasAtoms() {
 			total += st.anonMaxContentWidth(doc, styles, style, &run)
 		} else {
-			total += naturalTextWidth(st, run.plainText(), style)
+			total += st.runMaxContentWidth(style, &run)
 		}
 		items++
 		run.items = nil

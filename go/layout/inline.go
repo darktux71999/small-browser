@@ -541,19 +541,15 @@ func anonBlank(run *inlineRun) bool {
 }
 
 // anonMaxContentWidth is the max-content width of an anonymous item's run:
-// its unwrapped advance, atoms included. Without atoms it is the exact
-// text-only probe the flex measure always used; with atoms the words and
-// the atoms' margin-box widths sum through the same tokenizer the line
-// breaker uses, measured in a scratch buffer so inline-block boxes laid out
-// while measuring never reach the page.
+// its unwrapped advance, atoms included. Without atoms the width is shaped
+// with the flush path's span-aware text (runMaxContentWidth), so styled runs
+// size from the same advances paint uses; with atoms the words and the
+// atoms' margin-box widths sum through the same tokenizer the line breaker
+// uses, measured in a scratch buffer so inline-block boxes laid out while
+// measuring never reach the page.
 func (st *state) anonMaxContentWidth(doc *dom.Document, styles []css.Style, style *css.Style, run *inlineRun) float64 {
 	if !run.hasAtoms() {
-		measured := st.shaper.Measure(run.plainText(), adaptStyle(style), 1000000)
-		widest := 0.0
-		for _, line := range measured.Lines {
-			widest = max(widest, line.W)
-		}
-		return widest
+		return st.runMaxContentWidth(style, run)
 	}
 	scratch := &state{shaper: st.shaper, images: st.images, out: &Layout{}}
 	toks := scratch.tokenizeInline(doc, styles, style, run.items, nowrapWidth)
@@ -570,14 +566,54 @@ func (st *state) anonMaxContentWidth(doc *dom.Document, styles []css.Style, styl
 }
 
 // anonHeight is the height of an anonymous item's run laid out at width.
-// Without atoms it is the exact text-only measure; with atoms the run is
-// laid out in a scratch buffer through flushInline, so the line's atoms set
-// the height exactly as the real pass will.
+// Without atoms it is the runHeight probe, which shapes the same
+// span-aware text the real pass flushes, so the item box fits the lines
+// paint draws; with atoms the run is laid out in a scratch buffer through
+// flushInline, so the line's atoms set the height exactly as the real pass
+// will.
 func (st *state) anonHeight(doc *dom.Document, styles []css.Style, style *css.Style, run *inlineRun, width float64) float64 {
 	if !run.hasAtoms() {
-		return measureTextHeight(st, run.plainText(), style, width)
+		return st.runHeight(style, run, width)
 	}
 	scratch := &state{shaper: st.shaper, images: st.images, out: &Layout{}}
 	cp := &inlineRun{items: append([]inlineItem(nil), run.items...)}
 	return scratch.flushInline(doc, styles, style, 0, 0, max(width, 1), cp)
+}
+
+// runMaxContentWidth is the max-content width of an inline run: its
+// unwrapped advance shaped with the same span-aware text the flush path
+// lays out and paint draws. Runs without spans shape exactly the flattened
+// text the old probe measured, so only styled runs change.
+func (st *state) runMaxContentWidth(style *css.Style, run *inlineRun) float64 {
+	content, spans := styledInlineText(run.items, style)
+	if strings.TrimSpace(content) == "" {
+		return 0
+	}
+	if len(spans) == 0 {
+		return naturalTextWidth(st, content, style)
+	}
+	measured := st.shaper.MeasureStyled(content, adaptStyle(style), 1000000, spans)
+	widest := 0.0
+	for _, line := range measured.Lines {
+		widest = max(widest, line.W)
+	}
+	return widest
+}
+
+// runHeight is the height of an inline run laid out at width with the same
+// span-aware text the flush path lays out. Runs without spans take the
+// exact flattened measure, so only styled runs change.
+func (st *state) runHeight(style *css.Style, run *inlineRun, width float64) float64 {
+	content, spans := styledInlineText(run.items, style)
+	if strings.TrimSpace(content) == "" {
+		return 0
+	}
+	if len(spans) == 0 {
+		return measureTextHeight(st, content, style, width)
+	}
+	w := width
+	if style.WhiteSpaceNowrap {
+		w = nowrapWidth
+	}
+	return st.shaper.MeasureStyled(content, adaptStyle(style), max(w, 1), spans).Height
 }

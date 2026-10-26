@@ -781,3 +781,20 @@ sería bug de anchura de caja y se corrige ahí.
   secuencia de líneas de referencia (línea 2 corta tras "hosting") y el render
   vivo confirma la negrita. Verificado por el padre con recorte pixel a pixel
   vs la referencia. 12/12 paquetes verdes. `Risk: none`.
+- **L36** (2026-10-25): **Regresión de spans cazada por no-determinismo** (muse).
+  La raíz del «texto raro» residual era quirúrgica: el buffer de spans de
+  `showRun` se reservaba con `malloc` y el campo `italic` solo se asignaba
+  **condicionalmente** → basura de heap reciclada = itálicas fantasma que
+  hacían que las corridas de Pango divergieran de las medidas (capas dobles,
+  texto desplazado, solapes). **Método de caza**: los defectos no reproducían →
+  mismo binario × 2 renders = auto-diff de ~24k píxeles (¡no-determinismo!) →
+  memoria sin inicializar → el único campo condicional. Fix `malloc`→`calloc` +
+  una segunda discordancia real corregida (los probes de max-content/altura de
+  ítems anónimos medían texto aplanado mientras el flush estilizado envolvía).
+  Resultado: auto-diff 24k→**0**, AE 12.96→**12.83%**, altura 1819 inalterada,
+  12/12 paquetes. **Verificación visual del padre**: card limpio (una capa,
+  negritas correctas), footer con columnas separadas ✅. **Residual visto a
+  ojo** (siguiente unidad): el intro de soporte se aplasta en torre de una
+  palabra por línea y desborda hasta el footer (fragmentos "red by/gejo") — el
+  bug de **eje cruzado en ítems anónimos de flex en columna** (`#anonymous
+  [8 8 28 606]`) que el worker documentó como preexistente.
