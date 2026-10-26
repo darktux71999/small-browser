@@ -273,11 +273,18 @@ static void paint_draw_image(paint_t *p, cairo_surface_t *img,
 // line_height_absolute is the numeric CSS used value (font-size x factor,
 // text.LineHeightAbsolute) in Pango units. The separate normal flag selects
 // the same metric-derived natural height as the measuring shaper.
+typedef struct {
+	const char *family;
+	int size, weight, italic, spacing, start, end;
+	double r, g, b, a;
+} paint_span;
+
 static void paint_show_text(paint_t *p, PangoContext *ctx,
 		const char *text, const char *family,
 		int size_pango, int weight, int italic,
 		int width_pango, int align, int justify,
 		int line_height_absolute, int line_height_normal, int has_spacing, int spacing_pango,
+		const paint_span *spans, int span_count,
 		double x, double y,
 		double r, double g, double b, double a) {
 	PangoLayout *layout = pango_layout_new(ctx);
@@ -311,6 +318,32 @@ static void paint_show_text(paint_t *p, PangoContext *ctx,
 	pango_attr_list_insert(attrs, pango_attr_line_height_new_absolute(line_height_absolute));
 	if (has_spacing) {
 		pango_attr_list_insert(attrs, pango_attr_letter_spacing_new(spacing_pango));
+	}
+	for (int i = 0; i < span_count; i++) {
+		const paint_span *span = &spans[i];
+		PangoFontDescription *span_desc = pango_font_description_new();
+		pango_font_description_set_family(span_desc, span->family);
+		pango_font_description_set_size(span_desc, span->size);
+		pango_font_description_set_weight(span_desc, (PangoWeight)span->weight);
+		pango_font_description_set_style(span_desc, span->italic ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
+		PangoAttribute *font = pango_attr_font_desc_new(span_desc);
+		pango_font_description_free(span_desc);
+		font->start_index = (guint)span->start;
+		font->end_index = (guint)span->end;
+		pango_attr_list_insert(attrs, font);
+		PangoAttribute *spacing = pango_attr_letter_spacing_new(span->spacing);
+		spacing->start_index = (guint)span->start;
+		spacing->end_index = (guint)span->end;
+		pango_attr_list_insert(attrs, spacing);
+		PangoAttribute *foreground = pango_attr_foreground_new(
+			(guint16)(span->r * 65535.0), (guint16)(span->g * 65535.0), (guint16)(span->b * 65535.0));
+		foreground->start_index = (guint)span->start;
+		foreground->end_index = (guint)span->end;
+		pango_attr_list_insert(attrs, foreground);
+		PangoAttribute *alpha = pango_attr_foreground_alpha_new((guint16)(span->a * 65535.0));
+		alpha->start_index = (guint)span->start;
+		alpha->end_index = (guint)span->end;
+		pango_attr_list_insert(attrs, alpha);
 	}
 	pango_layout_set_attributes(layout, attrs);
 	pango_attr_list_unref(attrs);
@@ -698,6 +731,37 @@ func showRun(p *C.paint_t, ctx *C.PangoContext, run *layout.TextRun) {
 		hasSpacing = 1
 		spacing = int(style.LetterSpacing * text.PangoScale)
 	}
+	var spanMem unsafe.Pointer
+	var spanFamilies []*C.char
+	var spans []C.paint_span
+	if len(run.Spans) > 0 {
+		spanMem = C.malloc(C.size_t(len(run.Spans)) * C.size_t(C.sizeof_paint_span))
+		if spanMem != nil {
+			defer C.free(spanMem)
+			spans = unsafe.Slice((*C.paint_span)(spanMem), len(run.Spans))
+			spanFamilies = make([]*C.char, len(run.Spans))
+			for i, span := range run.Spans {
+				spanFamilies[i] = C.CString(text.ResolveFamily(span.Style.FontFamilies))
+				defer C.free(unsafe.Pointer(spanFamilies[i]))
+				spans[i].family = spanFamilies[i]
+				spans[i].size = C.int(span.Style.FontSize * text.PangoScale)
+				spans[i].weight = C.int(span.Style.FontWeight)
+				if spans[i].weight < 100 {
+					spans[i].weight = 100
+				}
+				if spans[i].weight > 900 {
+					spans[i].weight = 900
+				}
+				if span.Style.Italic {
+					spans[i].italic = 1
+				}
+				spans[i].spacing = C.int(span.Style.LetterSpacing * text.PangoScale)
+				spans[i].start, spans[i].end = C.int(span.Start), C.int(span.End)
+				spans[i].r, spans[i].g = C.double(span.Style.Color.R), C.double(span.Style.Color.G)
+				spans[i].b, spans[i].a = C.double(span.Style.Color.B), C.double(span.Style.Color.A)
+			}
+		}
+	}
 	size := style.FontSize
 	if size < 0 {
 		size = 0
@@ -715,6 +779,7 @@ func showRun(p *C.paint_t, ctx *C.PangoContext, run *layout.TextRun) {
 		C.int(size*text.PangoScale), C.int(weight), C.int(italic),
 		C.int(width*text.PangoScale), C.int(align), C.int(justify),
 		C.int(text.LineHeightAbsolute(size, style.LineHeight)), C.int(naturalLineHeight), C.int(hasSpacing), C.int(spacing),
+		(*C.paint_span)(spanMem), C.int(len(spans)),
 		C.double(run.X), C.double(run.Y),
 		C.double(c.R), C.double(c.G), C.double(c.B), C.double(c.A))
 }

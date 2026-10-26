@@ -18,6 +18,41 @@ typedef struct {
 	PangoContext *ctx;
 } textgo_ctx;
 
+static void textgo_add_span(PangoLayout *layout, int start, int end,
+		const char *family, int size_pango, int weight, int italic,
+		int spacing_pango, double r, double g, double b, double a) {
+	PangoAttrList *attrs = pango_layout_get_attributes(layout);
+	attrs = attrs ? pango_attr_list_copy(attrs) : pango_attr_list_new();
+	if (!attrs) {
+		return;
+	}
+	PangoFontDescription *desc = pango_font_description_new();
+	pango_font_description_set_family(desc, family);
+	pango_font_description_set_size(desc, size_pango);
+	pango_font_description_set_weight(desc, (PangoWeight)weight);
+	pango_font_description_set_style(desc, italic ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
+	PangoAttribute *font = pango_attr_font_desc_new(desc);
+	pango_font_description_free(desc);
+	font->start_index = (guint)start;
+	font->end_index = (guint)end;
+	pango_attr_list_insert(attrs, font);
+	PangoAttribute *spacing = pango_attr_letter_spacing_new(spacing_pango);
+	spacing->start_index = (guint)start;
+	spacing->end_index = (guint)end;
+	pango_attr_list_insert(attrs, spacing);
+	PangoAttribute *foreground = pango_attr_foreground_new(
+		(guint16)(r * 65535.0), (guint16)(g * 65535.0), (guint16)(b * 65535.0));
+	foreground->start_index = (guint)start;
+	foreground->end_index = (guint)end;
+	pango_attr_list_insert(attrs, foreground);
+	PangoAttribute *alpha = pango_attr_foreground_alpha_new((guint16)(a * 65535.0));
+	alpha->start_index = (guint)start;
+	alpha->end_index = (guint)end;
+	pango_attr_list_insert(attrs, alpha);
+	pango_layout_set_attributes(layout, attrs);
+	pango_attr_list_unref(attrs);
+}
+
 static textgo_ctx *textgo_new(void) {
 	textgo_ctx *c = (textgo_ctx *)calloc(1, sizeof *c);
 	if (!c) {
@@ -273,11 +308,18 @@ type Style struct {
 	TextAlign Align
 	// LetterSpacing in CSS pixels.
 	LetterSpacing float64
+	// Color is the text color in normalized RGBA components.
+	Color Color
 }
+
+// Color is a normalized RGBA text color.
+type Color struct{ R, G, B, A float64 }
 
 // Line is one visual line as Pango placed it, relative to the run origin.
 type Line struct {
 	X, Y, W, H float64
+	// Start and End are the byte range of this line in the measured text.
+	Start, End int
 	// Baseline is Pango's actual baseline offset from this line's logical top.
 	Baseline float64
 	Text     string
@@ -295,6 +337,12 @@ type Measured struct {
 	Height  float64
 	Metrics FontMetrics
 	Lines   []Line
+}
+
+// Span overrides the typography and color over a UTF-8 byte range.
+type Span struct {
+	Start, End int
+	Style      Style
 }
 
 // Shaper is a Pango context used only for measuring. It hangs off a scratch
@@ -327,6 +375,15 @@ func (s *Shaper) Close() {
 // (src/layout.rs:1682-1729). Only C-allocated strings cross into cgo; no Go
 // pointer ever reaches C.
 func (s *Shaper) Measure(text string, style Style, width float64) Measured {
+	return s.measure(text, style, width, nil)
+}
+
+// MeasureStyled measures a text run with inline typography spans.
+func (s *Shaper) MeasureStyled(text string, style Style, width float64, spans []Span) Measured {
+	return s.measure(text, style, width, spans)
+}
+
+func (s *Shaper) measure(text string, style Style, width float64, spans []Span) Measured {
 	// NUL would truncate the C string (src/layout.rs:1867-1868).
 	text = strings.ReplaceAll(text, "\x00", " ")
 	ctext := C.CString(text)
@@ -376,6 +433,18 @@ func (s *Shaper) Measure(text string, style Style, width float64) Measured {
 		return Measured{}
 	}
 	defer C.textgo_layout_free(layout)
+	for _, span := range spans {
+		if span.Start < 0 || span.End <= span.Start || span.End > len(text) {
+			continue
+		}
+		spanFamily := C.CString(ResolveFamily(familyStack(span.Style)))
+		C.textgo_add_span(layout, C.int(span.Start), C.int(span.End), spanFamily,
+			C.int(span.Style.FontSize*PangoScale), C.int(clampWeight(span.Style.FontWeight)),
+			C.int(boolInt(span.Style.Italic)), C.int(span.Style.LetterSpacing*PangoScale),
+			C.double(span.Style.Color.R), C.double(span.Style.Color.G),
+			C.double(span.Style.Color.B), C.double(span.Style.Color.A))
+		C.free(unsafe.Pointer(spanFamily))
+	}
 
 	var ascent, descent, naturalHeight C.int
 	C.textgo_font_metrics(s.ctx.ctx, cfamily, C.int(size*PangoScale), C.int(w), C.int(italic), &ascent, &descent, &naturalHeight)
@@ -403,11 +472,23 @@ func (s *Shaper) Measure(text string, style Style, width float64) Measured {
 			Y:        float64(info.y) / PangoScale,
 			W:        float64(info.w),
 			H:        float64(info.h),
+			Start:    start,
+			End:      start + length,
 			Baseline: float64(info.baseline) / PangoScale,
 			Text:     strings.TrimSpace(slice),
 		})
 	}
 	return out
+}
+
+func clampWeight(weight uint32) uint32 {
+	if weight < 100 {
+		return 100
+	}
+	if weight > 900 {
+		return 900
+	}
+	return weight
 }
 
 func boolInt(value bool) int {

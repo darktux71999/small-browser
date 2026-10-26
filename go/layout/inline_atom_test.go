@@ -97,6 +97,52 @@ func TestImageInsideInlineBlockGetsBox(t *testing.T) {
 	}
 }
 
+func TestInlineFontWeightChangesWrapping(t *testing.T) {
+	_, l := pageWithImages(t,
+		`<style>p { width: 580px; font-size: 18px; font-weight: 500; }</style>`+
+			`<p>Codeberg is a non-profit, community-led effort that provides services to `+
+			`<b>free and open-source projects</b>, such as Git hosting (using `+
+			`<a>Forgejo</a>), <a>Pages</a>, CI/CD, and a Weblate instance.</p>`+
+			`<p><b>Bold only</b></p>`)
+	var lines []string
+	for _, box := range l.Boxes {
+		if box.Tag == "#text" {
+			lines = append(lines, box.Text)
+		}
+	}
+	want := []string{
+		"Codeberg is a non-profit, community-led effort that provides",
+		"services to free and open-source projects, such as Git hosting",
+		"(using Forgejo), Pages, CI/CD, and a Weblate instance.",
+		"Bold only",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("paragraph lines = %#v, want %#v", lines, want)
+	}
+
+	var boldLine *LayoutBox
+	for i := range l.Boxes {
+		if l.Boxes[i].Tag == "#text" && strings.Contains(l.Boxes[i].Text, "Bold only") {
+			boldLine = &l.Boxes[i]
+			break
+		}
+	}
+	if boldLine == nil || !boldLine.Bold {
+		t.Fatalf("bold phrase box = %+v, want a bold text line", boldLine)
+	}
+	var foundBoldSpan bool
+	for _, run := range l.Runs {
+		for _, span := range run.Spans {
+			if run.Text[span.Start:span.End] == "free and open-source projects" && span.Style.FontWeight == 700 {
+				foundBoldSpan = true
+			}
+		}
+	}
+	if !foundBoldSpan {
+		t.Fatal("paint run is missing the bold span for free and open-source projects")
+	}
+}
+
 // textBaseline independently measures the public Pango baseline used to align
 // the atomic boxes with their surrounding text.
 func textBaseline(t *testing.T, b *LayoutBox) float64 {

@@ -17,6 +17,7 @@ import (
 
 	"browser-lite/css"
 	"browser-lite/dom"
+	"browser-lite/text"
 )
 
 // atomMarker stands in for one atomic box in inlineRun.String, so a run that
@@ -32,6 +33,7 @@ type inlineRun struct {
 // inlineItem is one text piece or one atomic box of an inlineRun.
 type inlineItem struct {
 	text   string
+	style  *css.Style
 	atom   dom.NodeID
 	isAtom bool
 }
@@ -77,9 +79,16 @@ func (r *inlineRun) plainText() string {
 // content, inline-block) in document order. An atomic box is never flattened,
 // so its own subtree is laid out by its own box, not by the text run.
 func collectInline(doc *dom.Document, styles []css.Style, id dom.NodeID, run *inlineRun) {
+	collectInlineWithStyle(doc, styles, id, run, nil)
+}
+
+func collectInlineWithStyle(doc *dom.Document, styles []css.Style, id dom.NodeID, run *inlineRun, inherited *css.Style) {
 	node := &doc.Nodes[id]
 	if node.IsText {
-		run.items = append(run.items, inlineItem{text: node.Text})
+		if inherited == nil && node.HasParent {
+			inherited = &styles[node.Parent]
+		}
+		run.items = append(run.items, inlineItem{text: node.Text, style: inherited})
 		return
 	}
 	if isNoscript(doc, id) {
@@ -94,7 +103,7 @@ func collectInline(doc *dom.Document, styles []css.Style, id dom.NodeID, run *in
 		return
 	}
 	for _, child := range node.Children {
-		collectInline(doc, styles, child, run)
+		collectInlineWithStyle(doc, styles, child, run, &styles[id])
 	}
 }
 
@@ -164,11 +173,13 @@ func (st *state) flushInline(doc *dom.Document, styles []css.Style, style *css.S
 	items := run.items
 	run.items = nil
 	if !hasAtomItem(items) {
-		var text strings.Builder
-		for _, it := range items {
-			text.WriteString(it.text)
+		content, spans := styledInlineText(items, style)
+		if len(spans) == 0 {
+			var text strings.Builder
+			text.WriteString(content)
+			return st.flushText(style, x, y, width, &text)
 		}
-		return st.flushText(style, x, y, width, &text)
+		return st.flushStyledText(style, x, y, width, content, spans)
 	}
 	toks := st.tokenizeInline(doc, styles, style, items, width)
 	space := st.spaceWidth(style)
@@ -181,6 +192,76 @@ func (st *state) flushInline(doc *dom.Document, styles []css.Style, style *css.S
 		total += st.placeLine(doc, styles, style, x, y+total, width, line)
 	}
 	return total
+}
+
+func styledInlineText(items []inlineItem, base *css.Style) (string, []text.Span) {
+	var content strings.Builder
+	var spans []text.Span
+	pendingSpace := false
+	spaceStyle := base
+	appendRune := func(r rune, style *css.Style) {
+		start := content.Len()
+		content.WriteRune(r)
+		end := content.Len()
+		if sameInlineTypography(style, base) {
+			return
+		}
+		adapted := adaptStyle(style)
+		if len(spans) > 0 && spans[len(spans)-1].End == start && sameTextTypography(spans[len(spans)-1].Style, adapted) {
+			spans[len(spans)-1].End = end
+			return
+		}
+		spans = append(spans, text.Span{Start: start, End: end, Style: adapted})
+	}
+	for _, item := range items {
+		itemStyle := item.style
+		if itemStyle == nil {
+			itemStyle = base
+		}
+		for _, r := range item.text {
+			if unicode.IsSpace(r) {
+				if content.Len() > 0 {
+					pendingSpace = true
+					spaceStyle = itemStyle
+				}
+				continue
+			}
+			if pendingSpace {
+				appendRune(' ', spaceStyle)
+				pendingSpace = false
+			}
+			appendRune(r, itemStyle)
+		}
+	}
+	return content.String(), spans
+}
+
+func sameInlineTypography(a, b *css.Style) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return sameFamilyList(a.FontFamilies, b.FontFamilies) && a.FontFamily == b.FontFamily &&
+		a.FontSize == b.FontSize && a.FontWeight == b.FontWeight &&
+		a.Italic == b.Italic && a.LetterSpacing == b.LetterSpacing && a.Color == b.Color
+}
+
+func sameFamilyList(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameTextTypography(a, b text.Style) bool {
+	return strings.Join(a.FontFamilies, "\x00") == strings.Join(b.FontFamilies, "\x00") &&
+		a.FontFamily == b.FontFamily && a.FontSize == b.FontSize &&
+		a.FontWeight == b.FontWeight && a.Italic == b.Italic &&
+		a.LetterSpacing == b.LetterSpacing && a.Color == b.Color
 }
 
 // hasAtomItem reports whether any item of the run is an atomic box.

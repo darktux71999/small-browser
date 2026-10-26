@@ -71,6 +71,7 @@ type TextRun struct {
 	Width float64
 	Text  string
 	Style css.Style
+	Spans []text.Span
 }
 
 // Layout is the laid-out page: boxes and runs plus the viewport width and
@@ -895,6 +896,70 @@ func (st *state) flushText(style *css.Style, x, y, width float64, run *strings.B
 	return measured.Height
 }
 
+func (st *state) flushStyledText(style *css.Style, x, y, width float64, content string, spans []text.Span) float64 {
+	if content == "" {
+		return 0
+	}
+	measureWidth := width
+	if style.WhiteSpaceNowrap {
+		measureWidth = nowrapWidth
+	}
+	measured := st.shaper.MeasureStyled(content, adaptStyle(style), measureWidth, spans)
+	if style.WhiteSpaceNowrap && len(measured.Lines) == 1 {
+		if natural := measured.Lines[0].W + 1; natural < measureWidth && natural > 0 {
+			measureWidth = natural
+			measured = st.shaper.MeasureStyled(content, adaptStyle(style), measureWidth, spans)
+		}
+	}
+	for _, line := range measured.Lines {
+		if line.Text == "" {
+			continue
+		}
+		st.out.Boxes = append(st.out.Boxes, LayoutBox{
+			Node:        NoNode,
+			Tag:         "#text",
+			X:           x + line.X,
+			Y:           y + line.Y,
+			W:           line.W,
+			H:           line.H,
+			Text:        line.Text,
+			Color:       style.Color,
+			FontSize:    style.FontSize,
+			Bold:        lineBold(line.Start, line.End, style, spans),
+			BorderColor: [4]css.Color{style.Color, style.Color, style.Color, style.Color},
+		})
+	}
+	st.out.Runs = append(st.out.Runs, TextRun{
+		X: x, Y: y, Width: measureWidth, Text: content, Style: *style,
+		Spans: append([]text.Span(nil), spans...),
+	})
+	return measured.Height
+}
+
+func lineBold(start, end int, base *css.Style, spans []text.Span) bool {
+	if base.FontWeight >= 600 {
+		return true
+	}
+	cursor := start
+	for _, span := range spans {
+		lo, hi := span.Start, span.End
+		if lo < start {
+			lo = start
+		}
+		if hi > end {
+			hi = end
+		}
+		if hi <= lo {
+			continue
+		}
+		if lo > cursor || span.Style.FontWeight < 600 {
+			return false
+		}
+		cursor = hi
+	}
+	return cursor >= end
+}
+
 // adaptStyle projects the computed style onto the typography the shaper
 // consumes. Field for field it follows what pango::create_layout reads
 // (src/layout.rs:1844-1899).
@@ -918,6 +983,7 @@ func adaptStyle(style *css.Style) text.Style {
 		LineHeightNormal: style.LineHeightNormal,
 		TextAlign:        align,
 		LetterSpacing:    style.LetterSpacing,
+		Color:            text.Color{R: style.Color.R, G: style.Color.G, B: style.Color.B, A: style.Color.A},
 	}
 }
 

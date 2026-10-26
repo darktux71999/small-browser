@@ -746,3 +746,38 @@ sería bug de anchura de caja y se corrige ahí.
   copia (licencia NSL/GPL; NSL prohíbe «competing use»). Próximo paso natural:
   un harness de estilo WPT para browser-lite (slices `url/`, `dom/nodes`,
   `timers` con testharness.js) como métrica de conformidad.
+- **L34** (2026-10-25): **Memoria diagnosticada + harness WPT al aire** (dos
+  unidades). (a) **Memoria** (nemotron-supervl): **NO hay fuga** — la curva de
+  RSS es salta-y-planas (2.6→14.3→**97MB y plano** en 300 frames): los ~130MB
+  que observó el usuario son la **huella viva** de la página (base Go+Cairo+
+  Pango+fontconfig ~20-25MB, DOM 5-15, estilos+layout 5-15, imágenes 2-20,
+  fuentes 2-8, QuickJS 2-8, frames ~3) + texturas del driver SDL de la ventana
+  real. Fix seguro aplicado: buffer de subida `toARGB` reutilizable (−3MB/frame
+  de asignación; RSS pico sin cambio por la retención de arena de glibc —
+  resultado negativo honesto que desvía el esfuerzo al conjunto vivo).
+  Endurecimiento añadido (padre): **tope de heap QuickJS 128MB por runtime**
+  (`JS_SetMemoryLimit` en esta variante de QuickJS; `SetMaxHeap` por runtime)
+  con pin de OOM — la pieza que faltaba del S5 junto al tope de tiempo.
+  (b) **Harness WPT** (muse-spark): `--wpt url [--wpt-timeout-ms]` con hook
+  propio (trap de `add_completion_callback`), contrato JSON (HARNESS/PASS/FAIL/
+  SUMMARY/JSON), códigos de salida 0/1/2, scorer `tools/wpt-score.py` con
+  scoreboard markdown, y 11 fixtures locales (28/28 subtests). **Primera sonda
+  real de WPT**: `Element-classlist` 1/3 (las APIs ausentes como
+  `createElementNS` truncaron el registro — resultados honestos, nunca
+  falsificados). El **norte del estándar ya tiene instrumento**. Bug de motor
+  encontrado por el harness (fuera de alcance, pinneado): `setHTML/setText`
+  dejan huérfanos los parent-links (querySelector los pilla) y `classList` con
+  token vacío lanza `InvalidCharacterError` en vez de `SyntaxError` — cola.
+- **L35** (2026-10-25): **Tipografía inline preservada — síntoma del usuario
+  atendido** (luna, 2ª unidad de métricas). Causa raíz del «texto muy junto y
+  raro»: `collectInline` **aplanaba los estilos descendientes** — los `<b>` se
+  medían y pintaban con el peso del padre (sin negrita); como la negrita es más
+  ancha, el envoltorio salía distinto al de Firefox (62 vs 69 caracteres por
+  línea en la medición plana). Evidencia que descarta hipótesis: la columna del
+  héroe mide **580px en ambos**, la familia resuelve **Noto Sans en ambos**,
+  sin letter-spacing específico. Fix: spans tipográficos inline preservados
+  en medición y pintado (misma semántica Pango en ambos lados, CSS 2.1 §6.2.1
+  de herencia + CSS Fonts para pesos) — el fixture determinista reproduce la
+  secuencia de líneas de referencia (línea 2 corta tras "hosting") y el render
+  vivo confirma la negrita. Verificado por el padre con recorte pixel a pixel
+  vs la referencia. 12/12 paquetes verdes. `Risk: none`.
